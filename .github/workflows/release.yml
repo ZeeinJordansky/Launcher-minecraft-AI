@@ -17,26 +17,24 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
-      - name: Set up JDK 21 (build-time only)
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
       - name: Run tests before publishing
         working-directory: minty-launcher
         run: cargo test --all-targets --target x86_64-pc-windows-msvc
-
       - name: Build self-contained Windows executable
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
-
+      - name: Verify PE architecture and embedded icon
+        shell: bash
+        run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
       - name: Stage exactly one application file
         shell: bash
         run: |
@@ -44,18 +42,18 @@ jobs:
           built="minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe"
           test -s "$built"
           cp "$built" dist/minty-launcher.exe
-          test "$(wc -c < dist/minty-launcher.exe)" -gt 1048576
-          sha256sum dist/minty-launcher.exe
-
+          python scripts/verify_windows_exe.py dist/minty-launcher.exe
       - name: Publish executable-only GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.${{ github.run_number }}
-          name: Minty Launcher v0.1.${{ github.run_number }}
+          tag_name: v0.1.5
+          name: Minty Launcher v0.1.5
           body: |
             Minty Launcher for Windows 10/11 x64.
 
-            Download the minty-launcher.exe asset and run it with a double-click. No terminal commands or separately installed Java are required from the user; a compatible Java Runtime is downloaded automatically when Minecraft is launched.
+            Download the single minty-launcher.exe asset and run it with a double-click. The Minty icon is embedded into the Windows executable itself; no sidecar icon file, terminal commands, Rust toolchain or separately installed Java are required from the user.
+
+            A compatible Java Runtime is downloaded automatically when Minecraft is launched.
           generate_release_notes: true
           files: dist/minty-launcher.exe
           fail_on_unmatched_files: true

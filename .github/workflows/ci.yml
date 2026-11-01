@@ -19,34 +19,24 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
-      - name: Set up JDK 21 (build-time only)
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
       - name: Run tests
         working-directory: minty-launcher
         run: cargo test --all-targets --target x86_64-pc-windows-msvc
-
       - name: Build one-file executable
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
-
-      - name: Verify executable
+      - name: Verify PE architecture and embedded icon
         shell: bash
-        run: |
-          exe="minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe"
-          test -s "$exe"
-          test "$(wc -c < "$exe")" -gt 1048576
-          sha256sum "$exe"
-
+        run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
       - name: Upload executable artifact
         uses: actions/upload-artifact@v4
         with:
