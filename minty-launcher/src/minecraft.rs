@@ -124,8 +124,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     check_cancelled(cancel)?;
 
     // Mutable data belongs to an optional isolated profile; common downloads stay shared.
-    let instance_dir = crate::config::instance_dir(config);
-    fs::create_dir_all(&instance_dir)?;
+    let instance_dir = crate::config::prepare_instance_dir(config)?;
     apply_weak_pc_profile(&instance_dir, low_end_profile)?;
     let metadata = if profile_id == version {
         base_metadata.clone()

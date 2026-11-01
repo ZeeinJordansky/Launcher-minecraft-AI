@@ -92,6 +92,65 @@ pub fn instance_dir(config: &AppConfig) -> PathBuf {
     config.game_dir.join("instances").join(safe_name)
 }
 
+/// Prepares the active instance and migrates existing mutable game data once.
+///
+/// Files already present in the destination are never overwritten. Symlinks in
+/// the old game directory are skipped so the migration cannot follow them outside
+/// the selected Minecraft folder.
+pub fn prepare_instance_dir(config: &AppConfig) -> Result<PathBuf> {
+    let target = instance_dir(config);
+    fs::create_dir_all(&target)?;
+
+    if !config.isolated_profiles {
+        return Ok(target);
+    }
+
+    for name in [
+        "mods", "saves", "resourcepacks", "shaderpacks", "config",
+        "screenshots", "server-resource-packs", "crash-reports",
+    ] {
+        let source = config.game_dir.join(name);
+        let destination = target.join(name);
+        if source.is_dir() && !destination.exists() {
+            copy_instance_directory(&source, &destination)?;
+        }
+    }
+
+    for name in [
+        "options.txt", "servers.dat", "servers.dat_old", "optionsof.txt",
+        "optionsshaders.txt", "optionsmenu.txt", "optionsvivecraft.txt",
+    ] {
+        let source = config.game_dir.join(name);
+        let destination = target.join(name);
+        if source.is_file() && !destination.exists() {
+            fs::copy(source, destination)?;
+        }
+    }
+
+    Ok(target)
+}
+
+fn copy_instance_directory(source: &std::path::Path, destination: &std::path::Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = destination.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source_path)?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            if !target_path.exists() {
+                copy_instance_directory(&source_path, &target_path)?;
+            }
+        } else if metadata.is_file() && !target_path.exists() {
+            fs::copy(&source_path, &target_path)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn config_file() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("com", "Minty", "Minty Launcher")
         .context("Не удалось определить каталог конфигурации")?;
@@ -165,4 +224,47 @@ pub fn save(config: &AppConfig) -> Result<()> {
     }
     fs::rename(temp, path)?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod instance_tests {
+    use super::{instance_dir, prepare_instance_dir, AppConfig};
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_root() -> PathBuf {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("minty-instance-test-{}-{stamp}", std::process::id()))
+    }
+
+    #[test]
+    fn isolation_uses_a_stable_profile_folder() {
+        let mut config = AppConfig::default();
+        config.game_dir = PathBuf::from("C:/Games/Minecraft");
+        config.isolated_profiles = true;
+        config.selected_profile_id = "fabric-loader-0.16.0-1.21.1".to_owned();
+        assert!(instance_dir(&config).ends_with("instances/fabric-loader-0_16_0-1_21_1"));
+    }
+
+    #[test]
+    fn enabling_isolation_copies_existing_saves_and_settings_without_overwriting() {
+        let root = temp_root();
+        let mut config = AppConfig::default();
+        config.game_dir = root.clone();
+        config.isolated_profiles = true;
+        config.selected_profile_id = "1.21.1".to_owned();
+
+        fs::create_dir_all(root.join("saves").join("World")).unwrap();
+        fs::write(root.join("saves").join("World").join("level.dat"), b"world").unwrap();
+        fs::write(root.join("options.txt"), b"renderDistance:12\n").unwrap();
+
+        let target = prepare_instance_dir(&config).unwrap();
+        assert_eq!(fs::read(target.join("saves/World/level.dat")).unwrap(), b"world");
+        assert_eq!(fs::read(target.join("options.txt")).unwrap(), b"renderDistance:12\n");
+
+        fs::write(target.join("options.txt"), b"renderDistance:8\n").unwrap();
+        prepare_instance_dir(&config).unwrap();
+        assert_eq!(fs::read(target.join("options.txt")).unwrap(), b"renderDistance:8\n");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
