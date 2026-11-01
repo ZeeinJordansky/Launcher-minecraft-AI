@@ -6,7 +6,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use sha1::{Digest, Sha1};
-use std::{collections::HashMap, fs, io::{Read, Write}, path::{Path, PathBuf}, process::Command, sync::{atomic::{AtomicUsize, Ordering}, Arc}, time::Duration};
+use std::{collections::HashMap, fs, io::{Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{atomic::{AtomicUsize, Ordering}, Arc}, time::Duration};
 use zip::ZipArchive;
 
 const VERSION_MANIFEST: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -95,10 +95,9 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     let versions_dir = game_dir.join("versions").join(&version);
     let libraries_dir = game_dir.join("libraries");
     let assets_dir = game_dir.join("assets");
-    let natives_dir = game_dir.join("natives").join(&profile_id);
     fs::create_dir_all(&game_dir)?;
     apply_weak_pc_profile(&game_dir, config.weak_pc_mode)?;
-    for dir in [&versions_dir, &libraries_dir, &assets_dir, &natives_dir] { fs::create_dir_all(dir)?; }
+    for dir in [&versions_dir, &libraries_dir, &assets_dir] { fs::create_dir_all(dir)?; }
 
     status(events, &format!("Получаю метаданные Minecraft {version}…"));
     let manifest: VersionManifest = client.get(VERSION_MANIFEST).send()?.error_for_status()?.json()?;
@@ -117,6 +116,8 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
         merge_loader_profile(&base_metadata, &profile)?
     };
 
+    let natives_dir = game_dir.join("natives").join(&profile_id);
+    fs::create_dir_all(&natives_dir)?;
     let client_download = metadata["downloads"]["client"].clone();
     if client_download.is_null() { bail!("Для версии {version} нет официального client.jar"); }
     let client_url = client_download["url"].as_str().ok_or_else(|| anyhow!("В метаданных отсутствует URL client.jar"))?;
@@ -215,7 +216,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     variables.insert("user_type", if account.access_token.is_empty() { "legacy" } else { "msa" });
     variables.insert("auth_xuid", account.xuid.as_str());
     variables.insert("clientid", config.microsoft_client_id.as_str());
-    variables.insert("version_type", "release");
+    variables.insert("version_type", metadata["type"].as_str().unwrap_or("release"));
     variables.insert("assets_index_name", asset_index_id.as_str());
     let log_config_text = log_config_path.to_string_lossy().to_string();
     variables.insert("path", log_config_text.as_str());

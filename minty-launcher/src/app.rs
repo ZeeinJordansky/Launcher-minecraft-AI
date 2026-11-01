@@ -555,7 +555,7 @@ impl MintyApp {
                     .fill(MINT)
                     .min_size(egui::vec2(260.0, 52.0))
                     .rounding(Rounding::same(12.0));
-                if ui.add_enabled(!self.launch_busy, button).clicked() {
+                if ui.add_enabled(!self.launch_busy && !self.install_busy, button).clicked() {
                     self.start_game();
                 }
                 ui.add_space(8.0);
