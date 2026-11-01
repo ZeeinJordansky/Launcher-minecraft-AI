@@ -1817,32 +1817,53 @@ impl MintyApp {
     }
 
     fn settings_hub(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(5.0);
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(RichText::new("СИСТЕМА").size(9.0).strong().color(self.accent_color()));
-                ui.label(RichText::new("Настройки лаунчера").size(25.0).strong().color(TEXT));
-            });
-        });
+        ui.add_space(4.0);
+        ui.label(RichText::new("Настройки лаунчера").size(25.0).strong().color(TEXT));
+        ui.label(RichText::new("Разделы настроек Minty Launcher").size(11.0).color(MUTED));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            self.settings_tab_button(ui, "Настройки", SettingsTab::General);
-            self.settings_tab_button(ui, "Журнал", SettingsTab::Journal);
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(12.0))
+                .inner_margin(egui::Margin::same(7.0)).show(ui, |ui| {
+                    ui.set_min_width(168.0);
+                    ui.vertical(|ui| {
+                        self.settings_tab_button(ui, "Основные", SettingsTab::General);
+                        self.settings_tab_button(ui, "Minecraft", SettingsTab::Game);
+                        self.settings_tab_button(ui, "Java", SettingsTab::Java);
+                        self.settings_tab_button(ui, "Производительность", SettingsTab::Performance);
+                        self.settings_tab_button(ui, "Оформление", SettingsTab::Appearance);
+                        self.settings_tab_button(ui, "Аккаунт", SettingsTab::Account);
+                        self.settings_tab_button(ui, "Файлы и хранилище", SettingsTab::Storage);
+                        self.settings_tab_button(ui, "Безопасность", SettingsTab::Security);
+                        self.settings_tab_button(ui, "Обновления", SettingsTab::Updates);
+                        self.settings_tab_button(ui, "Журнал", SettingsTab::Journal);
+                    });
+                });
+            ui.add_space(10.0);
+            ui.vertical(|ui| {
+                match self.settings_tab {
+                    SettingsTab::General => self.settings_general_page(ui),
+                    SettingsTab::Game => self.settings_game_page(ui),
+                    SettingsTab::Java => self.settings_java_page(ui),
+                    SettingsTab::Performance => self.settings_performance_page(ui),
+                    SettingsTab::Appearance => self.settings_appearance_page(ui),
+                    SettingsTab::Account => self.settings_account_page(ui),
+                    SettingsTab::Storage => self.settings_storage_page(ui),
+                    SettingsTab::Security => self.settings_security_page(ui),
+                    SettingsTab::Updates => self.settings_updates_page(ui),
+                    SettingsTab::Journal => self.journal_page(ui),
+                }
+            });
         });
-        ui.add_space(8.0);
-        match self.settings_tab {
-            SettingsTab::General => self.settings_page(ui),
-            SettingsTab::Journal => self.journal_page(ui),
-        }
     }
 
     fn settings_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: SettingsTab) {
         let selected = self.settings_tab == tab;
-        let response = ui.add_sized([116.0, 36.0],
-            egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
+        let response = ui.add_sized([152.0, 33.0],
+            egui::Button::new(RichText::new(label).strong().size(10.5)
+                .color(if selected { TEXT } else { MUTED }))
                 .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
                 .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
-                .rounding(Rounding::same(9.0)));
+                .rounding(Rounding::same(8.0)));
         if response.clicked() {
             self.settings_tab = tab;
             self.page_transition_started = Instant::now();
@@ -1855,184 +1876,260 @@ impl MintyApp {
         }
     }
 
-    fn settings_page(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.add_space(7.0);
-            ui.label(RichText::new("Настройки").size(28.0).strong().color(TEXT));
-            ui.label(RichText::new("Настрой папки, ресурсы компьютера, профиль и обновления.")
-                .size(13.0).color(MUTED));
-            ui.add_space(15.0);
+    fn settings_save_button(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(10.0);
+        if ui.add_sized([185.0, 39.0],
+            egui::Button::new(RichText::new("СОХРАНИТЬ").strong().color(Color32::from_rgb(15, 35, 28)))
+                .fill(self.accent_color()).rounding(Rounding::same(9.0))).clicked() {
+            if self.settings_tab == SettingsTab::Game {
+                self.save_settings();
+            } else if let Err(error) = config::save(&self.config) {
+                self.error = Some(format!("Не удалось сохранить: {error:#}"));
+            } else {
+                self.log("Настройки сохранены");
+            }
+        }
+    }
 
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(16.0))
-                .inner_margin(egui::Margin::same(17.0)).show(ui, |ui| {
-                    ui.label(RichText::new("АКЦЕНТНЫЙ ЦВЕТ").size(9.0).strong().color(MUTED));
+    fn settings_general_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Основные").size(21.0).strong().color(TEXT));
+            ui.label(RichText::new("Имя игрока и общие параметры интерфейса.").size(11.0).color(MUTED));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.label(RichText::new("ОФЛАЙН-ИМЯ").size(9.0).strong().color(MUTED));
+                    ui.add(egui::TextEdit::singleline(&mut self.config.offline_username).desired_width(330.0));
+                    ui.label(RichText::new("Используется при запуске офлайн-профиля.").size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("ЯЗЫК").size(9.0).strong().color(MUTED));
+                    ui.label(RichText::new("Русский").strong().color(TEXT));
+                    ui.label(RichText::new("Русский — основной язык текущей версии Minty.").size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.checkbox(&mut self.config.enable_animations, "Анимировать переходы между разделами");
+                });
+            self.settings_save_button(ui);
+        });
+    }
+
+    fn settings_game_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Minecraft").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.label(RichText::new("ПАПКА JAVA EDITION").size(9.0).strong().color(MUTED));
                     ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.directory_input).desired_width(340.0));
+                        if ui.button("Обзор…").clicked() { self.choose_game_directory(); }
+                        if ui.button("Открыть").clicked() { let _ = open::that(self.directory_input.trim()); }
+                    });
+                    ui.checkbox(&mut self.config.launch_fullscreen, "Запускать Java Edition в полноэкранном режиме");
+                    ui.checkbox(&mut self.config.isolated_profiles, "Изолировать миры, моды и настройки для каждой сборки");
+                    ui.label(RichText::new("При первом запуске в профиль копируются прежние worlds/mods/options. Исходные файлы не удаляются.")
+                        .size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("BEDROCK").size(9.0).strong().color(MUTED));
+                    egui::ComboBox::from_id_source("settings_bedrock_channel")
+                        .selected_text(&self.config.bedrock_channel).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.config.bedrock_channel, "Стабильная".to_owned(), "Стабильная");
+                            ui.selectable_value(&mut self.config.bedrock_channel, "Preview".to_owned(), "Preview");
+                        });
+                    ui.label(RichText::new("Номер сборки и откат Bedrock контролируются Microsoft Store.")
+                        .size(10.0).color(MUTED));
+                });
+            self.settings_save_button(ui);
+        });
+    }
+
+    fn settings_java_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Java Runtime").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.label(RichText::new("ПУТЬ К JAVA").size(9.0).strong().color(MUTED));
+                    ui.add(egui::TextEdit::singleline(&mut self.config.java_path).desired_width(420.0)
+                        .hint_text("Пусто — автоматический подбор"));
+                    ui.label(RichText::new(self.detected_java.as_ref().map(|p| format!("Найдена: {p}"))
+                        .unwrap_or_else(|| "Java будет найдена или установлена при запуске игры.".to_owned()))
+                        .size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("СБОРЩИК МУСОРА").size(9.0).strong().color(MUTED));
+                    egui::ComboBox::from_id_source("settings_gc")
+                        .selected_text(&self.config.gc_algorithm).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.config.gc_algorithm, "Авто".to_owned(), "Авто — рекомендуется");
+                            ui.selectable_value(&mut self.config.gc_algorithm, "G1GC".to_owned(), "G1GC");
+                            ui.selectable_value(&mut self.config.gc_algorithm, "ZGC".to_owned(), "ZGC");
+                            ui.selectable_value(&mut self.config.gc_algorithm, "Shenandoah".to_owned(), "Shenandoah");
+                        });
+                    ui.label(RichText::new("ZGC и Shenandoah требуют совместимой версии Java.")
+                        .size(10.0).color(MUTED));
+                });
+            self.settings_save_button(ui);
+        });
+    }
+
+    fn settings_performance_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Производительность").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.label(RichText::new(&self.hardware.cpu_name).strong().color(TEXT));
+                    ui.label(RichText::new(format!("{} ГБ ОЗУ · {} потоков CPU", self.hardware.total_memory_gb, self.hardware.logical_cores))
+                        .size(11.0).color(MUTED));
+                    if ui.checkbox(&mut self.config.auto_memory, "Автоматически подбирать объём ОЗУ").changed()
+                        && self.config.auto_memory {
+                        self.config.max_memory_gb = self.hardware.recommended_memory_gb;
+                    }
+                    if self.config.auto_memory {
+                        ui.label(RichText::new(format!("Рекомендуется {} ГБ", self.hardware.recommended_memory_gb))
+                            .size(10.0).color(self.accent_color()));
+                    } else {
+                        let max = self.hardware.total_memory_gb.saturating_sub(2).min(16).max(2) as u8;
+                        self.config.max_memory_gb = self.config.max_memory_gb.clamp(2, max);
+                        ui.add(egui::Slider::new(&mut self.config.max_memory_gb, 2..=max).suffix(" ГБ"));
+                    }
+                    ui.checkbox(&mut self.config.auto_graphics_profile, "Автоматический профиль графики");
+                    ui.checkbox(&mut self.config.weak_pc_mode, "Режим «Слабый ПК»");
+                    ui.label(RichText::new("Режим оптимизирует поддерживаемые параметры options.txt. FPS также зависит от видеокарты, драйвера, мира и модов.")
+                        .size(10.0).color(MUTED));
+                });
+            self.settings_save_button(ui);
+        });
+    }
+
+    fn settings_appearance_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Оформление").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.label(RichText::new("АКЦЕНТНЫЙ ЦВЕТ").size(9.0).strong().color(MUTED));
+                    ui.horizontal_wrapped(|ui| {
                         let mut accent = self.accent_color();
                         if ui.color_edit_button_srgba(&mut accent).changed() {
                             self.config.accent_color = [accent.r(), accent.g(), accent.b()];
                             configure_style(ui.ctx(), accent);
                         }
-                        ui.label(RichText::new(format!("#{:02X}{:02X}{:02X}", self.config.accent_color[0],
-                            self.config.accent_color[1], self.config.accent_color[2])).monospace().color(TEXT));
-                        if ui.small_button("Minty").clicked() {
-                            self.config.accent_color = [145, 226, 183];
-                            configure_style(ui.ctx(), self.accent_color());
-                        }
-                        if ui.small_button("Океан").clicked() {
-                            self.config.accent_color = [104, 190, 219];
-                            configure_style(ui.ctx(), self.accent_color());
-                        }
-                        if ui.small_button("Лаванда").clicked() {
-                            self.config.accent_color = [174, 145, 224];
-                            configure_style(ui.ctx(), self.accent_color());
-                        }
-                        if ui.small_button("Янтарь").clicked() {
-                            self.config.accent_color = [232, 184, 104];
-                            configure_style(ui.ctx(), self.accent_color());
+                        for (name, rgb) in [
+                            ("Minty", [145, 226, 183]), ("Океан", [104, 190, 219]),
+                            ("Лаванда", [174, 145, 224]), ("Янтарь", [232, 184, 104]),
+                            ("Рубин", [220, 105, 115]),
+                        ] {
+                            if ui.button(name).clicked() {
+                                self.config.accent_color = rgb;
+                                configure_style(ui.ctx(), self.accent_color());
+                            }
                         }
                     });
-                    ui.add_space(13.0);
-                    ui.label(RichText::new("ПАПКА MINECRAFT").size(9.0).strong().color(MUTED));
-                    ui.add_space(7.0);
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.directory_input).desired_width(460.0));
-                        if ui.button("Обзор…").clicked() { self.choose_game_directory(); }
-                        if ui.button("Открыть").clicked() {
-                            let _ = std::fs::create_dir_all(PathBuf::from(self.directory_input.trim()));
-                            let _ = open::that(self.directory_input.trim());
-                        }
-                    });
-                    ui.label(RichText::new("Папка должна быть доступна для записи. Для надёжности не используй Program Files.")
+                    ui.checkbox(&mut self.config.enable_animations, "Плавные анимации вкладок");
+                    ui.label(RichText::new("Видео-фоны и музыка пока не включены; здесь доступны цветовые темы и нативные переходы.")
                         .size(10.0).color(MUTED));
-                    ui.add_space(15.0);
-                    ui.label(RichText::new("АККАУНТ MICROSOFT").size(9.0).strong().color(MUTED));
-                    ui.add_space(6.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.config.microsoft_client_id)
-                        .desired_width(570.0).hint_text("Application (client) ID"));
-                    ui.label(RichText::new("Нужен для официального входа. Используй Public client и Device Code Flow; Client Secret не добавляй.")
-                        .size(10.0).color(MUTED));
-                    ui.add_space(15.0);
-                    ui.label(RichText::new("JAVA").size(9.0).strong().color(MUTED));
-                    ui.add(egui::TextEdit::singleline(&mut self.config.java_path)
-                        .desired_width(570.0).hint_text("Пусто — Minty подберёт и установит нужную Java"));
-                    ui.label(RichText::new("Можно указать java.exe или javaw.exe. Если выбран javaw.exe, лаунчер автоматически попробует парный java.exe.")
-                        .size(10.0).color(MUTED));
-                    ui.label(RichText::new(self.detected_java.as_ref()
-                        .map(|path| format!("Найдена при запуске: {path}"))
-                        .unwrap_or_else(|| "Подходящая Java будет выбрана при запуске игры.".to_owned()))
-                        .size(9.0).color(MUTED));
-                    ui.add_space(12.0);
-                    ui.label(RichText::new("ПАРАМЕТРЫ ЗАПУСКА").size(9.0).strong().color(MUTED));
-                    ui.checkbox(&mut self.config.launch_fullscreen, "Запускать Minecraft на весь экран (F11 — переключение)");
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Сборщик мусора Java").size(10.0).color(TEXT));
-                        egui::ComboBox::from_id_source("gc_algorithm_picker")
-                            .selected_text(&self.config.gc_algorithm)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.config.gc_algorithm, "Авто".to_owned(), "Авто");
-                                ui.selectable_value(&mut self.config.gc_algorithm, "G1GC".to_owned(), "G1GC");
-                                ui.selectable_value(&mut self.config.gc_algorithm, "ZGC".to_owned(), "ZGC");
-                                ui.selectable_value(&mut self.config.gc_algorithm, "Shenandoah".to_owned(), "Shenandoah");
-                            });
-                    });
-                    ui.label(RichText::new("ZGC и Shenandoah доступны не во всех сборках Java. При ошибке запуска верни «Авто».")
-                        .size(9.0).color(MUTED));
-                    ui.add_space(10.0);
-                    ui.checkbox(&mut self.config.isolated_profiles, "Изолировать моды, миры и настройки каждой сборки");
-                    ui.label(RichText::new("Изменяемые данные хранятся в instances/<профиль>. Общие библиотеки и ресурсы не дублируются.")
-                        .size(9.0).color(MUTED));
                 });
+            self.settings_save_button(ui);
+        });
+    }
 
-            ui.add_space(13.0);
-            ui.columns(2, |columns| {
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(16.0))
-                    .inner_margin(egui::Margin::same(16.0)).show(&mut columns[0], |ui| {
-                        ui.label(RichText::new("ПРОИЗВОДИТЕЛЬНОСТЬ").size(9.0).strong().color(MUTED));
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(&self.hardware.cpu_name).size(11.0).strong().color(TEXT));
-                        ui.add_space(6.0);
+    fn settings_account_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Аккаунт").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    if let Some(account) = self.account.clone() {
+                        ui.label(RichText::new(format!("Выполнен вход: {}", account.name)).strong().color(TEXT));
+                        if ui.button("Выйти").clicked() {
+                            auth::sign_out(); self.account = None; self.avatar_texture = None;
+                            self.config.last_account_name = None; self.config.last_account_uuid = None;
+                            self.config.last_account_xuid = None;
+                        }
+                    } else if ui.add_enabled(!self.auth_busy, egui::Button::new("Войти через Microsoft")
+                        .fill(self.accent_color())).clicked() {
+                        self.begin_login();
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("MICROSOFT PUBLIC CLIENT ID").size(9.0).strong().color(MUTED));
+                    ui.add(egui::TextEdit::singleline(&mut self.config.microsoft_client_id).desired_width(420.0)
+                        .hint_text("Application (client) ID"));
+                    ui.label(RichText::new("Используется Device Code Flow. Client Secret не добавляй.")
+                        .size(10.0).color(MUTED));
+                });
+            self.settings_save_button(ui);
+        });
+    }
+
+    fn settings_storage_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Файлы и хранилище").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    let paths = [
+                        ("Minecraft", self.config.game_dir.clone()),
+                        ("Изолированные экземпляры", self.config.game_dir.join("instances")),
+                        ("Java Runtime", config::data_dir().map(|p| p.join("runtimes")).unwrap_or_default()),
+                        ("Журналы", config::data_dir().map(|p| p.join("logs")).unwrap_or_default()),
+                    ];
+                    for (name, path) in paths {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(format!("{} GB", self.hardware.total_memory_gb)).size(22.0).strong().color(TEXT));
-                                ui.label(RichText::new("ОЗУ установлено").size(10.0).color(MUTED));
+                                ui.label(RichText::new(name).strong().color(TEXT));
+                                ui.label(RichText::new(path.display().to_string()).size(9.0).color(MUTED));
                             });
-                            ui.add_space(16.0);
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new(format!("{}", self.hardware.logical_cores)).size(22.0).strong().color(TEXT));
-                                ui.label(RichText::new("Потоков CPU").size(10.0).color(MUTED));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.button("Открыть").clicked() {
+                                    let _ = std::fs::create_dir_all(&path);
+                                    let _ = open::that(&path);
+                                }
                             });
                         });
-                        ui.add_space(11.0);
-                        if ui.checkbox(&mut self.config.auto_memory,
-                            RichText::new("Подбирать память Java автоматически").strong().color(TEXT)).changed() {
-                            if self.config.auto_memory {
-                                self.config.max_memory_gb = self.hardware.recommended_memory_gb;
-                            }
-                        }
-                        if self.config.auto_memory {
-                            ui.label(RichText::new(format!("Minty выделит {} GB для игры.", self.hardware.recommended_memory_gb))
-                                .size(10.0).color(MINT));
-                        } else {
-                            let manual_max = self.hardware.total_memory_gb.saturating_sub(2).min(16).max(2) as u8;
-                            self.config.max_memory_gb = self.config.max_memory_gb.clamp(2, manual_max);
-                            ui.add(egui::Slider::new(&mut self.config.max_memory_gb, 2..=manual_max).suffix(" GB"));
-                        }
-                        ui.add_space(8.0);
-                        ui.checkbox(&mut self.config.auto_graphics_profile,
-                            RichText::new("Автоматический профиль графики").strong().color(TEXT));
-                        ui.label(RichText::new(if self.hardware.low_end {
-                            "Обнаружен начальный уровень системы: будет включён экономный профиль."
-                        } else {
-                            "Для этой системы будет выбран сбалансированный профиль."
-                        }).size(10.0).color(MUTED));
-                        ui.checkbox(&mut self.config.weak_pc_mode,
-                            RichText::new("Принудительно включить режим слабого ПК").color(TEXT));
-                        ui.label(RichText::new("Снижает дальность прорисовки, эффекты и потребление ресурсов. Исходный options.txt резервируется.")
-                            .size(10.0).color(MUTED));
-                    });
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(16.0))
-                    .inner_margin(egui::Margin::same(16.0)).show(&mut columns[1], |ui| {
-                        ui.label(RichText::new("ОБНОВЛЕНИЯ").size(9.0).strong().color(MUTED));
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(format!("Установлена версия {}", env!("CARGO_PKG_VERSION")))
-                            .size(17.0).strong().color(TEXT));
-                        if let Some(info) = &self.update_info {
-                            ui.label(RichText::new(format!("Доступно: {}", info.version)).strong().color(MINT));
-                        }
-                        if let Some(notice) = &self.update_notice {
-                            ui.label(RichText::new(notice).size(10.0).color(MUTED));
-                        } else if self.update_checking {
-                            ui.label(RichText::new("Проверка обновлений…").size(10.0).color(MUTED));
-                        } else {
-                            ui.label(RichText::new("Minty проверяет новые версии автоматически при запуске.")
-                                .size(10.0).color(MUTED));
-                        }
-                        ui.add_space(8.0);
-                        if ui.add_enabled(!self.update_checking, egui::Button::new("Проверить сейчас")).clicked() {
-                            self.check_updates();
-                        }
-                        if self.update_info.is_some() {
-                            if ui.add_enabled(!self.update_downloading,
-                                egui::Button::new(if self.update_downloading { "Загрузка…" } else { "Обновить автоматически" })
-                                    .fill(MINT).rounding(Rounding::same(8.0))).clicked() {
-                                self.start_update();
-                            }
-                            if ui.button("Скачать вручную").clicked() { self.open_manual_update(); }
-                            if ui.button("Пропустить эту версию").clicked() { self.skip_update(); }
-                        } else if ui.button("Открыть страницу релизов").clicked() {
-                            let _ = open::that("https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases");
-                        }
-                        ui.label(RichText::new("Автоматическая загрузка требует доступа к GitHub Release без авторизации. Сейчас репозиторий приватный; ручная загрузка открывается в браузере после входа в GitHub.")
-                            .size(9.0).color(MUTED));
-                    });
-            });
+                        ui.separator();
+                    }
+                    if ui.button("Открыть настройки Minty").clicked() {
+                        if let Ok(path) = config::config_file() { let _ = open::that(path); }
+                    }
+                });
+        });
+    }
 
-            ui.add_space(14.0);
-            if ui.add_sized([190.0, 42.0],
-                egui::Button::new(RichText::new("СОХРАНИТЬ НАСТРОЙКИ").strong().color(Color32::from_rgb(15, 35, 28)))
-                    .fill(MINT).rounding(Rounding::same(10.0))).clicked() {
-                self.save_settings();
-            }
+    fn settings_security_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Безопасность").size(21.0).strong().color(TEXT));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.label(RichText::new("Контроль загрузок").strong().color(self.accent_color()));
+                    ui.label(RichText::new("Minty проверяет хеши там, где их публикует источник, и отклоняет файлы при несовпадении.")
+                        .size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("Проверка модов").strong().color(self.accent_color()));
+                    ui.label(RichText::new("Сканер читает метаданные JAR, ищет повреждённые архивы, повторные ID и часть конфликтов загрузчиков. Это не антивирус.")
+                        .size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("Windows Sandbox / AppContainer").strong().color(RED));
+                    ui.label(RichText::new("Ограниченный токен для Java пока не реализован. Minecraft и сторонние моды работают с правами текущего пользователя. Не запускай непроверенные моды.")
+                        .size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("Microsoft refresh token хранится в системном хранилище учётных данных, а не в settings.json.")
+                        .size(10.0).color(MUTED));
+                });
+        });
+    }
+
+    fn settings_updates_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("Обновления").size(21.0).strong().color(TEXT));
+            ui.label(RichText::new(format!("Установлена версия {}", env!("CARGO_PKG_VERSION"))).size(11.0).color(MUTED));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    if let Some(info) = &self.update_info {
+                        ui.label(RichText::new(format!("Доступна версия {}", info.version)).strong().color(self.accent_color()));
+                    }
+                    if let Some(note) = &self.update_notice {
+                        ui.label(RichText::new(note).size(10.0).color(MUTED));
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(!self.update_checking, egui::Button::new("Проверить сейчас")).clicked() { self.check_updates(); }
+                        if ui.add_enabled(self.update_info.is_some() && !self.update_downloading, egui::Button::new("Скачать обновление")).clicked() { self.start_update(); }
+                        if ui.button("Релизы ↗").clicked() { let _ = open::that("https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases"); }
+                    });
+                    ui.label(RichText::new("Репозиторий приватный: автоматическая загрузка релиза требует доступа или отдельного публичного канала обновлений.")
+                        .size(10.0).color(MUTED));
+                });
         });
     }
 
@@ -2140,7 +2237,9 @@ impl eframe::App for MintyApp {
                 egui::TopBottomPanel::bottom("status_footer")
                     .frame(egui::Frame::none().fill(BG))
                     .show_inside(ui, |ui| self.footer(ui));
-                let transition = (self.page_transition_started.elapsed().as_secs_f32() / 0.22).clamp(0.0, 1.0);
+                let transition = if self.config.enable_animations {
+                    (self.page_transition_started.elapsed().as_secs_f32() / 0.22).clamp(0.0, 1.0)
+                } else { 1.0 };
                 ui.set_opacity(transition);
                 ui.add_space((1.0 - transition) * 10.0);
                 match self.page {
