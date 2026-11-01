@@ -3,12 +3,19 @@ use crate::{
     config::{self, AppConfig},
     minecraft::{self, LaunchEvent, VersionInfo},
     skin,
+    mods::{self, ModProject},
+    bedrock,
     system_info::{self, HardwareInfo},
     updater::{self, UpdateInfo},
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Rounding, Stroke};
-use std::{path::PathBuf, thread, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    thread,
+    time::Duration,
+};
 
 const BG: Color32 = Color32::from_rgb(13, 17, 22);
 const SIDEBAR: Color32 = Color32::from_rgb(18, 24, 31);
@@ -24,10 +31,23 @@ const GOLD: Color32 = Color32::from_rgb(234, 192, 117);
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Page {
     Home,
-    Installations,
-    Skin,
-    Journal,
+    Minecraft,
     Settings,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum MinecraftTab {
+    Builds,
+    Versions,
+    Profile,
+    Mods,
+    Bedrock,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum SettingsTab {
+    General,
+    Journal,
 }
 
 struct AvatarImage {
@@ -50,6 +70,16 @@ pub struct MintyApp {
     update_notice: Option<String>,
     restart_for_update: bool,
     page: Page,
+    minecraft_tab: MinecraftTab,
+    settings_tab: SettingsTab,
+    launch_cancel: Option<Arc<AtomicBool>>,
+    mods: Vec<ModProject>,
+    mod_search: String,
+    mod_status: String,
+    mod_searching: bool,
+    mod_installing: bool,
+    mod_search_rx: Option<Receiver<Result<Vec<ModProject>, String>>>,
+    mod_install_rx: Option<Receiver<Result<String, String>>>,
     versions: Vec<VersionInfo>,
     latest_release: String,
     account: Option<Account>,
@@ -76,8 +106,10 @@ pub struct MintyApp {
 
 impl MintyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        configure_style(&cc.egui_ctx);
         let config = config::load().unwrap_or_default();
+        configure_style(&cc.egui_ctx, Color32::from_rgb(
+            config.accent_color[0], config.accent_color[1], config.accent_color[2],
+        ));
         let directory_input = config.game_dir.to_string_lossy().into_owned();
         let logs = config::recent_logs(300).unwrap_or_default();
         let (auth_tx, auth_rx) = unbounded();
@@ -97,6 +129,16 @@ impl MintyApp {
             update_notice: None,
             restart_for_update: false,
             page: Page::Home,
+            minecraft_tab: MinecraftTab::Builds,
+            settings_tab: SettingsTab::General,
+            launch_cancel: None,
+            mods: Vec::new(),
+            mod_search: String::new(),
+            mod_status: "Ищи моды через Modrinth или импортируй собственные файлы.".to_owned(),
+            mod_searching: false,
+            mod_installing: false,
+            mod_search_rx: None,
+            mod_install_rx: None,
             versions: Vec::new(),
             latest_release: String::new(),
             account: None,
@@ -284,6 +326,126 @@ impl MintyApp {
         }
     }
 
+    fn cancel_launch(&mut self) {
+        if let Some(cancel) = &self.launch_cancel {
+            cancel.store(true, Ordering::Relaxed);
+            self.status = "Отменяю подготовку Minecraft…".to_owned();
+            self.log("Пользователь запросил отмену запуска Minecraft.");
+        }
+    }
+
+    fn search_mod_store(&mut self) {
+        if self.mod_searching || self.mod_installing { return; }
+        let query = self.mod_search.trim().to_owned();
+        let game_version = self.config.selected_version.clone();
+        let loader = self.config.selected_loader.clone();
+        let (tx, rx) = unbounded();
+        self.mod_search_rx = Some(rx);
+        self.mod_searching = true;
+        self.mod_status = "Ищу совместимые моды в каталоге Modrinth…".to_owned();
+        let ctx = self.ctx.clone();
+        thread::spawn(move || {
+            tx.send(mods::search(&query, &game_version, &loader).map_err(|error| format!("{error:#}"))).ok();
+            ctx.request_repaint();
+        });
+    }
+
+    fn install_store_mod(&mut self, slug: String) {
+        if self.mod_installing { return; }
+        if self.config.selected_loader == "Vanilla" {
+            self.mod_status = "Для модов сначала выбери Fabric, Forge, NeoForge или Quilt.".to_owned();
+            return;
+        }
+        let game_version = self.config.selected_version.clone();
+        let loader = self.config.selected_loader.clone();
+        let mods_dir = self.config.game_dir.join("mods");
+        let (tx, rx) = unbounded();
+        self.mod_install_rx = Some(rx);
+        self.mod_installing = true;
+        self.mod_status = format!("Устанавливаю {slug}…");
+        let ctx = self.ctx.clone();
+        thread::spawn(move || {
+            tx.send(mods::install(&slug, &game_version, &loader, &mods_dir)
+                .map(|path| format!("Мод установлен: {}", path.display()))
+                .map_err(|error| format!("{error:#}"))).ok();
+            ctx.request_repaint();
+        });
+    }
+
+    fn import_game_files(&mut self) {
+        let Some(files) = rfd::FileDialog::new()
+            .add_filter("Minecraft files", &["jar", "mcpack", "mcaddon", "mcworld"])
+            .set_title("Импортировать мод или дополнение")
+            .pick_files() else { return; };
+        let mut imported = 0usize;
+        let mut errors = Vec::new();
+        for path in files {
+            match path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+                "jar" => {
+                    let mods_dir = self.config.game_dir.join("mods");
+                    let result = (|| -> anyhow::Result<()> {
+                        std::fs::create_dir_all(&mods_dir)?;
+                        let filename = path.file_name().ok_or_else(|| anyhow::anyhow!("У файла нет имени"))?;
+                        let mut destination = mods_dir.join(filename);
+                        if destination.exists() {
+                            let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("mod");
+                            destination = mods_dir.join(format!("{stem}-imported.jar"));
+                        }
+                        std::fs::copy(&path, &destination)?;
+                        Ok(())
+                    })();
+                    match result { Ok(()) => imported += 1, Err(error) => errors.push(format!("{}: {error}", path.display())) }
+                }
+                "mcpack" | "mcaddon" | "mcworld" => {
+                    match bedrock::import_addon(&path) {
+                        Ok(()) => imported += 1,
+                        Err(error) => errors.push(format!("{}: {error:#}", path.display())),
+                    }
+                }
+                _ => errors.push(format!("Неподдерживаемый файл: {}", path.display())),
+            }
+        }
+        self.mod_status = if errors.is_empty() {
+            format!("Передано в игру файлов: {imported}. Для Bedrock дождись сообщения об импорте внутри Minecraft.")
+        } else {
+            format!("Импортировано: {imported}. Ошибки: {}", errors.join(" | "))
+        };
+        self.log(self.mod_status.clone());
+    }
+
+    fn open_java_mods_folder(&self) {
+        let path = self.config.game_dir.join("mods");
+        let _ = std::fs::create_dir_all(&path);
+        let _ = open::that(path);
+    }
+
+    fn poll_mod_tasks(&mut self) {
+        let search_result = self.mod_search_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(result) = search_result {
+            self.mod_search_rx = None;
+            self.mod_searching = false;
+            match result {
+                Ok(projects) => {
+                    self.mod_status = format!("Найдено проектов: {}", projects.len());
+                    self.mods = projects;
+                }
+                Err(error) => self.mod_status = format!("Поиск не выполнен: {error}"),
+            }
+        }
+        let install_result = self.mod_install_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(result) = install_result {
+            self.mod_install_rx = None;
+            self.mod_installing = false;
+            match result {
+                Ok(message) => {
+                    self.mod_status = message.clone();
+                    self.log(message);
+                }
+                Err(error) => self.mod_status = format!("Не удалось установить мод: {error}"),
+            }
+        }
+    }
+
     fn begin_login(&mut self) {
         if self.config.microsoft_client_id.trim().is_empty() {
             self.error = Some(
@@ -367,8 +529,10 @@ impl MintyApp {
         let config = self.config.clone();
         let (tx, rx) = unbounded();
         self.launch_rx = Some(rx);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.launch_cancel = Some(cancel.clone());
         thread::spawn(move || {
-            let _ = minecraft::launch(config, account, tx);
+            let _ = minecraft::launch(config, account, tx, cancel);
         });
     }
 
@@ -426,12 +590,20 @@ impl MintyApp {
                     self.log(message);
                     self.launch_busy = false;
                     self.install_busy = false;
+                    self.launch_cancel = None;
+                }
+                LaunchEvent::Cancelled => {
+                    self.log("Подготовка Minecraft отменена.");
+                    self.launch_busy = false;
+                    self.install_busy = false;
+                    self.launch_cancel = None;
                 }
                 LaunchEvent::Failed(message) => {
                     self.error = Some(message.clone());
                     self.log("Не удалось запустить Minecraft");
                     self.launch_busy = false;
                     self.install_busy = false;
+                    self.launch_cancel = None;
                 }
             }
         }
@@ -466,6 +638,7 @@ impl MintyApp {
             }
         }
         self.poll_background_tasks();
+        self.poll_mod_tasks();
     }
 
     fn save_settings(&mut self) {
