@@ -65,7 +65,7 @@ impl Default for AppConfig {
             check_updates_on_start: true,
             close_after_game: false,
             skipped_update_version: None,
-            accent_color: [145, 226, 183],
+            accent_color: [82, 165, 53],
             last_account_name: None,
             last_account_uuid: None,
             last_account_xuid: None,

@@ -1,6 +1,6 @@
 #define AppName "Minty Launcher"
 #ifndef AppVersion
-  #define AppVersion "0.6.0"
+  #define AppVersion "1.7.0"
 #endif
 
 [Setup]

@@ -2,7 +2,7 @@
 
 **Minty Launcher** — нативный лаунчер Minecraft для Windows 10/11 x64 на Rust и egui.
 
-## Интерфейс и каталог v0.6.0
+## Интерфейс и каталог v1.7.0
 
 - Обновлённая верхняя панель в стиле современных игровых лаунчеров. Профиль — ник, круглый аватар и статус — закреплён у правого края.
 - Векторные кнопки свернуть, развернуть/восстановить и закрыть с анимацией наведения. Исправлено резервирование места под кнопки.
@@ -30,7 +30,7 @@
 
 - [Последний EXE](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/minty-launcher.exe)
 - [Установщик Windows](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/MintyLauncher-Setup.exe)
-- [Релиз v0.6.0](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/tag/v0.6.0)
+- [Релиз v1.7.0](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/tag/v1.7.0)
 - [Исходный код](https://github.com/ZeeinJordansky/Launcher-minecraft-AI)
 
 ## Ограничения

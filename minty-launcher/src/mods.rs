@@ -139,25 +139,41 @@ pub struct ModProject {
     pub latest_version: Option<String>,
     #[serde(default)]
     pub project_type: String,
+    #[serde(default)]
+    pub display_categories: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ProjectVersion {
+/// One downloadable release of a Modrinth project (a "version" in Modrinth terms).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectVersion {
     #[serde(default)]
-    loaders: Vec<String>,
+    pub id: String,
     #[serde(default)]
-    game_versions: Vec<String>,
-    files: Vec<ProjectFile>,
+    pub name: String,
+    #[serde(default)]
+    pub version_number: String,
+    #[serde(default)]
+    pub version_type: String,
+    #[serde(default)]
+    pub date_published: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub loaders: Vec<String>,
+    #[serde(default)]
+    pub game_versions: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<ProjectFile>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ProjectFile {
-    filename: String,
-    url: String,
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectFile {
+    pub filename: String,
+    pub url: String,
     #[serde(default)]
-    primary: bool,
+    pub primary: bool,
     #[serde(default)]
-    hashes: std::collections::HashMap<String, String>,
+    pub hashes: std::collections::HashMap<String, String>,
 }
 
 pub fn search(query: &str, game_version: &str, loader: &str, project_type: &str, sort_index: &str) -> Result<Vec<ModProject>> {
@@ -445,6 +461,94 @@ pub fn install(slug: &str, game_version: &str, loader: &str, mods_dir: &Path) ->
     fs::write(&target, &bytes)
         .with_context(|| format!("Не удалось записать мод в {}", target.display()))?;
     Ok(target)
+}
+
+/// List the downloadable versions of a project so the user can pick one.
+/// `game_version` / `loader` are applied only when non-empty (compatibility filter).
+pub fn list_versions(slug: &str, game_version: &str, loader: &str, project_type: &str) -> Result<Vec<ProjectVersion>> {
+    let client = client()?;
+    let mut request = client.get(format!("{API}/project/{slug}/version"));
+    if !game_version.trim().is_empty() && game_version != "latest-release" {
+        request = request.query(&[("game_versions", serde_json::to_string(&vec![game_version])?)]);
+    }
+    if project_type == "mod" {
+        if let Some(value) = loader_facet(loader) {
+            request = request.query(&[("loaders", serde_json::to_string(&vec![value])?)]);
+        }
+    }
+    let mut versions: Vec<ProjectVersion> = request
+        .send()
+        .context("Не удалось получить список версий проекта")?
+        .error_for_status()
+        .context("Modrinth не вернул список версий проекта")?
+        .json()
+        .context("Modrinth вернул некорректный список версий")?;
+    versions.retain(|version| !version.files.is_empty());
+    versions.truncate(80);
+    Ok(versions)
+}
+
+/// Download and install one exact version chosen by the user.
+pub fn install_version(slug: &str, version: &ProjectVersion, project_type: &str, target_dir: &Path) -> Result<PathBuf> {
+    if !matches!(project_type, "mod" | "resourcepack" | "shader" | "world") {
+        bail!("Этот тип проекта нельзя установить напрямую: {project_type}");
+    }
+    let file = version.files.iter().find(|file| file.primary)
+        .or_else(|| version.files.first())
+        .ok_or_else(|| anyhow!("В выбранной версии нет файла для загрузки"))?;
+    let filename = file.filename.rsplit(['/', '\\']).next().unwrap_or("project.bin").to_owned();
+    let lower = filename.to_ascii_lowercase();
+    match project_type {
+        "mod" if !lower.ends_with(".jar") => bail!("Modrinth вернул файл не формата .jar: {filename}"),
+        "resourcepack" | "shader" if !lower.ends_with(".zip") => bail!("Modrinth вернул неподдерживаемый архив: {filename}"),
+        "world" if !lower.ends_with(".zip") && !lower.ends_with(".mrpack") => bail!("Modrinth вернул неподдерживаемый архив: {filename}"),
+        _ => {}
+    }
+    let client = client()?;
+    let bytes = client.get(&file.url).send()
+        .context("Не удалось скачать выбранную версию")?
+        .error_for_status()
+        .context("Modrinth отклонил скачивание")?
+        .bytes()
+        .context("Не удалось прочитать скачанный файл")?;
+    if bytes.len() < 32 || !bytes.starts_with(b"PK") {
+        bail!("Скачанный файл не похож на JAR/ZIP-архив Minecraft.");
+    }
+    if let Some(expected) = file.hashes.get("sha1") {
+        let actual = hex::encode(Sha1::digest(&bytes));
+        if !actual.eq_ignore_ascii_case(expected) {
+            bail!("Контрольная сумма файла не совпала. Файл не установлен.");
+        }
+    }
+    if project_type == "world" {
+        return install_world_archive(&bytes, slug, target_dir);
+    }
+    fs::create_dir_all(target_dir)
+        .with_context(|| format!("Не удалось создать папку: {}", target_dir.display()))?;
+    let target = target_dir.join(&filename);
+    if target.exists() {
+        bail!("Эта версия уже установлена: {}", target.display());
+    }
+    fs::write(&target, &bytes)
+        .with_context(|| format!("Не удалось записать файл в {}", target.display()))?;
+    Ok(target)
+}
+
+/// Download a small catalogue image (project icon). Only HTTPS, capped at 4 MiB.
+pub fn fetch_image_bytes(url: &str) -> Result<Vec<u8>> {
+    if !url.starts_with("https://") {
+        bail!("Недопустимый адрес изображения");
+    }
+    let bytes = client()?.get(url).send()
+        .context("Не удалось загрузить иконку")?
+        .error_for_status()
+        .context("Сервер отклонил запрос иконки")?
+        .bytes()
+        .context("Не удалось прочитать иконку")?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        bail!("Иконка превышает допустимый размер");
+    }
+    Ok(bytes.to_vec())
 }
 
 fn loader_facet(loader: &str) -> Option<&'static str> {

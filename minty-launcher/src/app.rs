@@ -12,20 +12,23 @@ use crate::{
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Rounding, Stroke};
 use std::{
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, atomic::{AtomicBool, Ordering}},
     thread,
     time::{Duration, Instant},
 };
 
-const BG: Color32 = Color32::from_rgb(13, 17, 22);
-const SIDEBAR: Color32 = Color32::from_rgb(18, 24, 31);
-const PANEL: Color32 = Color32::from_rgb(24, 32, 41);
-const PANEL_LIGHT: Color32 = Color32::from_rgb(34, 44, 55);
-const MINT: Color32 = Color32::from_rgb(145, 226, 183);
-const MINT_DARK: Color32 = Color32::from_rgb(50, 122, 94);
-const TEXT: Color32 = Color32::from_rgb(239, 243, 239);
-const MUTED: Color32 = Color32::from_rgb(153, 169, 179);
+const BG: Color32 = Color32::from_rgb(18, 18, 19);
+const SIDEBAR: Color32 = Color32::from_rgb(30, 30, 31);
+const PANEL: Color32 = Color32::from_rgb(38, 39, 40);
+const PANEL_LIGHT: Color32 = Color32::from_rgb(60, 61, 63);
+const MINT: Color32 = Color32::from_rgb(82, 165, 53);
+#[allow(dead_code)]
+const MINT_DARK: Color32 = Color32::from_rgb(52, 112, 34);
+const TEXT: Color32 = Color32::from_rgb(240, 240, 240);
+const MUTED: Color32 = Color32::from_rgb(160, 162, 165);
+const BORDER: Color32 = Color32::from_rgb(70, 71, 73);
 const RED: Color32 = Color32::from_rgb(235, 111, 115);
 const GOLD: Color32 = Color32::from_rgb(234, 192, 117);
 
@@ -136,12 +139,28 @@ pub struct MintyApp {
     benchmark_rx: Option<Receiver<system_info::BenchmarkResult>>,
     benchmark_result: Option<system_info::BenchmarkResult>,
     benchmark_busy: bool,
+    bg_texture: egui::TextureHandle,
+    mod_icons: HashMap<String, egui::TextureHandle>,
+    mod_icon_requested: HashSet<String>,
+    icon_tx: Sender<(String, Result<AvatarImage, String>)>,
+    icon_rx: Receiver<(String, Result<AvatarImage, String>)>,
+    mod_versions: HashMap<String, Vec<mods::ProjectVersion>>,
+    mod_versions_loading: HashSet<String>,
+    mod_versions_tx: Sender<(String, Result<Vec<mods::ProjectVersion>, String>)>,
+    mod_versions_rx: Receiver<(String, Result<Vec<mods::ProjectVersion>, String>)>,
+    mod_expanded: Option<String>,
+    mod_version_status: String,
     ctx: egui::Context,
 }
 
 impl MintyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let config = config::load().unwrap_or_default();
+        let mut config = config::load().unwrap_or_default();
+        if config.accent_color == [145, 226, 183] {
+            // v1.7.0 switches the default accent to the official launcher green.
+            config.accent_color = [82, 165, 53];
+            let _ = config::save(&config);
+        }
         cc.egui_ctx.set_pixels_per_point(config.ui_scale.clamp(0.80, 1.50));
         configure_style(&cc.egui_ctx, Color32::from_rgb(
             config.accent_color[0], config.accent_color[1], config.accent_color[2],
@@ -159,6 +178,9 @@ impl MintyApp {
             egui::ColorImage::from_rgba_unmultiplied([icon_w as usize, icon_h as usize], &icon.into_raw()),
             egui::TextureOptions::LINEAR,
         );
+        let bg_texture = make_background_texture(&cc.egui_ctx);
+        let (icon_tx, icon_rx) = unbounded();
+        let (mod_versions_tx, mod_versions_rx) = unbounded();
         let mut app = Self {
             config,
             hardware,
@@ -230,6 +252,17 @@ impl MintyApp {
             benchmark_rx: None,
             benchmark_result: None,
             benchmark_busy: false,
+            bg_texture,
+            mod_icons: HashMap::new(),
+            mod_icon_requested: HashSet::new(),
+            icon_tx,
+            icon_rx,
+            mod_versions: HashMap::new(),
+            mod_versions_loading: HashSet::new(),
+            mod_versions_tx,
+            mod_versions_rx,
+            mod_expanded: None,
+            mod_version_status: String::new(),
             ctx: cc.egui_ctx.clone(),
         };
         if let Ok(data_dir) = config::data_dir() {
@@ -521,6 +554,9 @@ impl MintyApp {
             else if self.mod_filter_compatible { self.config.selected_loader.clone() }
             else { "Vanilla".to_owned() };
         let sort = self.mod_sort.clone();
+        self.mod_versions.clear();
+        self.mod_versions_loading.clear();
+        self.mod_expanded = None;
         let (tx, rx) = unbounded();
         self.mod_search_rx = Some(rx);
         self.mod_searching = true;
@@ -650,6 +686,20 @@ impl MintyApp {
     }
 
     fn poll_mod_tasks(&mut self) {
+        while let Ok((url, result)) = self.icon_rx.try_recv() {
+            if let Ok(avatar) = result {
+                let image = egui::ColorImage::from_rgba_unmultiplied([avatar.width, avatar.height], &avatar.rgba);
+                let texture = self.ctx.load_texture(format!("mod-icon-{url}"), image, egui::TextureOptions::LINEAR);
+                self.mod_icons.insert(url, texture);
+            }
+        }
+        while let Ok((slug, result)) = self.mod_versions_rx.try_recv() {
+            self.mod_versions_loading.remove(&slug);
+            match result {
+                Ok(list) => { self.mod_versions.insert(slug, list); }
+                Err(error) => self.mod_version_status = format!("Не удалось получить версии: {error}"),
+            }
+        }
         let search_result = self.mod_search_rx.as_ref().and_then(|rx| rx.try_recv().ok());
         if let Some(result) = search_result {
             self.mod_search_rx = None;
@@ -1083,7 +1133,7 @@ impl MintyApp {
     fn window_titlebar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("minty_custom_titlebar")
             .exact_height(42.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(10, 14, 19)))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(17, 17, 18)))
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.horizontal(|ui| {
@@ -1093,10 +1143,12 @@ impl MintyApp {
                     let drag_width = (ui.available_width() - controls_width).max(0.0);
                     let (drag_rect, drag_response) = ui.allocate_exact_size(
                         egui::vec2(drag_width, 34.0), egui::Sense::click_and_drag());
-                    ui.painter().circle_filled(drag_rect.left_center() + egui::vec2(3.0, 0.0), 3.4, self.accent_color());
-                    ui.painter().text(drag_rect.left_center() + egui::vec2(14.0, 0.0),
+                    let logo_rect = egui::Rect::from_center_size(drag_rect.left_center() + egui::vec2(12.0, 0.0), egui::vec2(22.0, 22.0));
+                    ui.painter().image(self.logo_texture.id(), logo_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    ui.painter().text(drag_rect.left_center() + egui::vec2(32.0, 0.0),
                         egui::Align2::LEFT_CENTER,
-                        format!("MINTY  /  LAUNCHER     v{}", env!("CARGO_PKG_VERSION")),
+                        format!("MINTY LAUNCHER   v{}", env!("CARGO_PKG_VERSION")),
                         FontId::proportional(10.5), Color32::from_rgb(174, 190, 190));
                     if drag_response.drag_started() { ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag); }
                     if drag_response.double_clicked() {
@@ -1120,7 +1172,7 @@ impl MintyApp {
                 });
                 let bounds = ui.min_rect();
                 ui.painter().line_segment([bounds.left_bottom(), bounds.right_bottom()],
-                    Stroke::new(1.0, Color32::from_rgb(30, 39, 47)));
+                    Stroke::new(1.0, Color32::from_rgb(12, 12, 13)));
             });
     }
 
@@ -1135,226 +1187,195 @@ impl MintyApp {
         }
     }
 
-    fn top_navigation(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("minty_top_navigation")
-            .exact_height(78.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(18, 25, 32))
-                .inner_margin(egui::Margin::symmetric(20.0, 8.0)))
+    fn sidebar(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("minty_sidebar")
+            .exact_width(252.0)
+            .resizable(false)
+            .frame(egui::Frame::none().fill(SIDEBAR)
+                .stroke(Stroke::new(1.0, Color32::from_rgb(12, 12, 13))))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let (logo, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
-                    ui.painter().image(
-                        self.logo_texture.id(),
-                        logo,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
-                    ui.add_space(9.0);
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new("MINTY").size(18.0).strong().color(TEXT));
-                        ui.label(RichText::new("MINECRAFT  ·  JAVA & BEDROCK").size(8.0).strong().color(MUTED));
-                    });
-                    ui.add_space(24.0);
-                    self.top_tab(ui, self.ui_label("home"), Page::Home);
-                    self.top_tab(ui, self.ui_label("minecraft"), Page::Minecraft);
-                    self.top_tab(ui, self.ui_label("settings"), Page::Settings);
-
-                    let mut open_profile = false;
-                    // This layout owns the remaining width, so the complete account block
-                    // remains pinned to the far right on every page and window size.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        egui::Frame::none()
-                            .fill(PANEL)
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(43, 57, 63)))
-                            .rounding(Rounding::same(13.0))
-                            .inner_margin(egui::Margin::symmetric(9.0, 5.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    open_profile = self.avatar_widget(ui, 38.0).clicked();
-                                    ui.add_space(2.0);
-                                    ui.vertical(|ui| {
-                                        let name = self.account.as_ref().map(|account| account.name.as_str())
-                                            .unwrap_or(self.config.offline_username.as_str());
-                                        ui.add_sized([136.0, 18.0],
-                                            egui::Label::new(RichText::new(name).strong().color(TEXT).size(11.5)).truncate());
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("●").size(7.0)
-                                                .color(if self.account.is_some() { self.accent_color() } else { MUTED }));
-                                            ui.label(RichText::new(if self.account.is_some() {
-                                                self.ui_label("microsoft")
-                                            } else {
-                                                self.ui_label("offline")
-                                            }).size(9.0).color(if self.account.is_some() { self.accent_color() } else { MUTED }));
-                                        });
-                                    });
-                                });
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                let mut open_profile = false;
+                let mut start_login = false;
+                egui::Frame::none().inner_margin(egui::Margin::symmetric(16.0, 16.0)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        open_profile = self.avatar_widget(ui, 46.0).clicked();
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.add_space(4.0);
+                            let name = self.account.as_ref().map(|account| account.name.clone())
+                                .unwrap_or_else(|| self.config.offline_username.clone());
+                            ui.allocate_ui_with_layout(egui::vec2(160.0, 20.0), Layout::left_to_right(Align::Center), |ui| {
+                                ui.add(egui::Label::new(RichText::new(name).strong().color(TEXT).size(14.0)).truncate());
                             });
-                        if self.launch_busy {
-                            ui.add_space(9.0);
-                            let cancel = egui::Button::new(
-                                RichText::new("Отменить запуск").strong().color(Color32::WHITE)
-                            ).fill(Color32::from_rgb(130, 54, 61))
-                                .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
-                                .rounding(Rounding::same(11.0));
-                            if ui.add_sized([138.0, 42.0], cancel).clicked() { self.cancel_launch(); }
-                        }
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let online = self.account.is_some();
+                                ui.label(RichText::new("●").size(8.0).color(if online { MINT } else { MUTED }));
+                                ui.label(RichText::new(if online { self.ui_label("microsoft") } else { self.ui_label("offline") })
+                                    .size(11.0).color(if online { MINT } else { MUTED }));
+                            });
+                        });
                     });
-                    if open_profile { self.open_skin_workshop(); }
+                    if self.account.is_none() {
+                        ui.add_space(12.0);
+                        let width = ui.available_width();
+                        if mc_button(ui, "Войти через Microsoft", egui::vec2(width, 32.0), 12.0, !self.auth_busy, false).clicked() {
+                            start_login = true;
+                        }
+                    }
                 });
-                let bounds = ui.min_rect();
-                ui.painter().line_segment(
-                    [bounds.left_bottom(), bounds.right_bottom()],
-                    Stroke::new(1.0, Color32::from_rgb(32, 44, 51)),
-                );
+                if open_profile { self.open_skin_workshop(); }
+                if start_login { self.begin_login(); }
+                sidebar_divider(ui);
+                ui.add_space(6.0);
+                self.sidebar_item(ui, self.ui_label("home"), None, Page::Home, NavIcon::Home);
+                self.sidebar_item(ui, self.ui_label("minecraft"), Some("Java Edition"), Page::Minecraft, NavIcon::Block);
+
+                let bottom_block = 52.0 + 36.0 + 8.0;
+                let spare = (ui.available_height() - bottom_block).max(0.0);
+                ui.add_space(spare);
+                sidebar_divider(ui);
+                self.sidebar_item(ui, self.ui_label("settings"), None, Page::Settings, NavIcon::Gear);
+                ui.add_space(4.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new(format!("Minty Launcher  v{}", env!("CARGO_PKG_VERSION")))
+                        .size(10.0).color(Color32::from_rgb(112, 114, 117)));
+                });
             });
     }
 
-    fn top_tab(&mut self, ui: &mut egui::Ui, label: &str, page: Page) {
+    fn sidebar_item(&mut self, ui: &mut egui::Ui, label: &str, subtitle: Option<&str>, page: Page, icon: NavIcon) {
         let selected = self.page == page;
-        let response = ui.add_sized(
-            [112.0, 46.0],
-            egui::Button::new(RichText::new(label).strong().size(12.5)
-                .color(if selected { TEXT } else { MUTED }))
-                .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
-                .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
-                .rounding(Rounding::same(12.0)),
-        );
-        paint_hover_feedback(ui, &response, self.accent_color(), 12.0);
-        if response.clicked() { self.switch_page(page); }
+        let size = egui::vec2(ui.available_width(), 52.0);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        let hover = ui.ctx().animate_value_with_time(
+            response.id.with("sidebar-hover"), if response.hovered() { 1.0 } else { 0.0 }, 0.12);
         if selected {
-            let marker_width = response.rect.width() * 0.34;
+            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(54, 55, 57));
             ui.painter().rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(response.rect.center().x - marker_width * 0.5, response.rect.bottom() - 3.0),
-                    egui::vec2(marker_width, 2.5),
-                ),
-                Rounding::same(2.0),
-                self.accent_color(),
-            );
+                egui::Rect::from_min_size(rect.left_top(), egui::vec2(4.0, rect.height())), 0.0, MINT);
+        } else if hover > 0.01 {
+            ui.painter().rect_filled(rect, 0.0, Color32::from_white_alpha((hover * 16.0) as u8));
         }
+        draw_nav_icon(ui.painter(), icon, egui::pos2(rect.left() + 34.0, rect.center().y), selected);
+        let text_color = if selected { Color32::WHITE } else { Color32::from_rgb(206, 207, 209) };
+        match subtitle {
+            Some(sub) => {
+                ui.painter().text(egui::pos2(rect.left() + 62.0, rect.center().y - 8.0),
+                    egui::Align2::LEFT_CENTER, label, FontId::proportional(14.5), text_color);
+                ui.painter().text(egui::pos2(rect.left() + 62.0, rect.center().y + 9.0),
+                    egui::Align2::LEFT_CENTER, sub, FontId::proportional(10.5), MUTED);
+            }
+            None => {
+                ui.painter().text(egui::pos2(rect.left() + 62.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER, label, FontId::proportional(14.5), text_color);
+            }
+        }
+        if response.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+        if response.clicked() { self.switch_page(page); }
+    }
+
+    fn play_bar(&mut self, ctx: &egui::Context) {
+        let installed = scan_installed_profiles(&self.config.game_dir);
+        let mut selection = if self.config.selected_profile_id.trim().is_empty() {
+            self.config.selected_version.clone()
+        } else { self.config.selected_profile_id.clone() };
+        let mut changed: Option<InstalledProfile> = None;
+        let mut play_clicked = false;
+        let mut cancel_clicked = false;
+        egui::TopBottomPanel::bottom("minty_play_bar")
+            .exact_height(100.0)
+            .frame(egui::Frame::none().fill(Color32::from_rgb(22, 22, 23))
+                .stroke(Stroke::new(1.0, Color32::from_rgb(8, 8, 9)))
+                .inner_margin(egui::Margin::symmetric(24.0, 12.0)))
+            .show(ctx, |ui| {
+                ui.columns(3, |columns| {
+                    // Left: installation picker, like the official "Latest release" selector.
+                    columns[0].vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.label(RichText::new("ВЕРСИЯ").size(9.5).strong().color(MUTED));
+                        egui::ComboBox::from_id_source("play_bar_profile_picker")
+                            .selected_text(if installed.is_empty() { "Нет установленных версий".to_owned() }
+                                else { installed.iter().find(|p| p.id == selection)
+                                    .map(|p| format!("{}  ·  {}", p.id, p.loader))
+                                    .unwrap_or_else(|| "Выбери установленную версию".to_owned()) })
+                            .width((ui.available_width() - 8.0).clamp(140.0, 300.0))
+                            .show_ui(ui, |ui| {
+                                for profile in &installed {
+                                    let label = format!("{}  ·  {}  ·  {}", profile.id, profile.game_version, profile.loader);
+                                    if ui.selectable_value(&mut selection, profile.id.clone(), label).changed() {
+                                        changed = Some(profile.clone());
+                                    }
+                                }
+                            });
+                        ui.label(RichText::new(match installed.iter().find(|p| p.id == selection) {
+                            Some(profile) => format!("Minecraft {}  ·  {}", profile.game_version, profile.loader),
+                            None => "Установи игру: Minecraft → Версии".to_owned(),
+                        }).size(10.5).color(MUTED));
+                    });
+                    // Centre: the big green PLAY button.
+                    columns[1].vertical_centered(|ui| {
+                        ui.add_space(4.0);
+                        let label = if self.launch_busy { "ПОДГОТОВКА…" } else { "ИГРАТЬ" };
+                        let enabled = !installed.is_empty() && !self.launch_busy && !self.install_busy;
+                        if mc_button(ui, label, egui::vec2(260.0_f32.min(ui.available_width()), 60.0), 24.0, enabled, true).clicked() {
+                            play_clicked = true;
+                        }
+                    });
+                    // Right: cancel button while preparing.
+                    columns[2].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if self.launch_busy
+                            && mc_button(ui, "Отменить запуск", egui::vec2(150.0, 36.0), 12.0, true, false).clicked() {
+                            cancel_clicked = true;
+                        }
+                    });
+                });
+            });
+        if let Some(profile) = changed {
+            self.config.selected_version = profile.game_version.clone();
+            self.config.selected_profile_id = if profile.id == profile.game_version { String::new() } else { profile.id.clone() };
+            self.config.selected_loader = profile.loader;
+            let _ = config::save(&self.config);
+        }
+        if cancel_clicked { self.cancel_launch(); }
+        if play_clicked { self.start_game(); }
     }
 
     fn home_page(&mut self, ui: &mut egui::Ui) {
         let installed = scan_installed_profiles(&self.config.game_dir);
-        let selected = if self.config.selected_profile_id.trim().is_empty() {
-            self.config.selected_version.clone()
-        } else { self.config.selected_profile_id.clone() };
-
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.add_space(8.0);
-            egui::Frame::none().fill(Color32::from_rgb(22, 36, 37))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(53, 79, 72)))
-                .rounding(Rounding::same(22.0)).inner_margin(egui::Margin::symmetric(26.0, 23.0))
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    let hero_rect = ui.min_rect();
-                    ui.painter().circle_filled(
-                        egui::pos2(hero_rect.right() - 74.0, hero_rect.center().y),
-                        118.0,
-                        Color32::from_rgba_unmultiplied(
-                            self.accent_color().r(), self.accent_color().g(), self.accent_color().b(), 15,
-                        ),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            egui::Frame::none().fill(Color32::from_rgb(31, 57, 48))
-                                .rounding(Rounding::same(20.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("MINTY  /  JAVA + BEDROCK").size(9.0).strong().color(self.accent_color()));
-                                });
-                            ui.add_space(11.0);
-                            ui.label(RichText::new("Твоя библиотека Minecraft.").size(30.0).strong().color(TEXT));
-                            ui.add_space(5.0);
-                            ui.label(RichText::new("Сборки, моды и игровые профили — в одном месте.").size(13.0).color(MUTED));
-                            ui.add_space(14.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("●").color(self.accent_color()).size(10.0));
-                                ui.label(RichText::new("Локальные сборки").size(10.5).color(TEXT));
-                                ui.add_space(14.0);
-                                ui.label(RichText::new("●").color(self.accent_color()).size(10.0));
-                                ui.label(RichText::new("Изоляция профилей").size(10.5).color(TEXT));
-                            });
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.add(egui::Image::new(&self.logo_texture).fit_to_exact_size(egui::vec2(116.0, 116.0)));
-                        });
-                    });
-                });
-
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("МОЯ БИБЛИОТЕКА").size(9.0).strong().color(self.accent_color()));
-                    ui.label(RichText::new("Установленные сборки").size(22.0).strong().color(TEXT));
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Открыть папку игры").clicked() {
+            ui.add_space(26.0);
+            // Wordmark with a hard drop shadow, in the spirit of the official launcher header.
+            let width = ui.available_width();
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 74.0), egui::Sense::hover());
+            let font = FontId::proportional(62.0);
+            ui.painter().text(rect.center() + egui::vec2(4.0, 4.0), egui::Align2::CENTER_CENTER,
+                "MINECRAFT", font.clone(), Color32::from_black_alpha(190));
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER,
+                "MINECRAFT", font, Color32::from_rgb(214, 214, 214));
+            ui.vertical_centered(|ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.label(RichText::new("J A V A   E D I T I O N").size(15.0).strong().color(MINT));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Сборки, моды и игровые профили — в одном месте.").size(12.5).color(Color32::from_rgb(190, 192, 195)));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let total = 190.0 * 2.0 + 10.0;
+                    ui.add_space(((ui.available_width() - total) * 0.5).max(0.0));
+                    if mc_button(ui, "Открыть папку игры", egui::vec2(190.0, 34.0), 12.0, true, false).clicked() {
                         let _ = std::fs::create_dir_all(&self.config.game_dir);
                         let _ = open::that(&self.config.game_dir);
                     }
-                    if ui.button("Добавить версию").clicked() {
+                    if mc_button(ui, "Добавить версию", egui::vec2(190.0, 34.0), 12.0, true, false).clicked() {
                         self.switch_page(Page::Minecraft);
                         self.minecraft_tab = MinecraftTab::Versions;
                     }
                 });
             });
-            ui.add_space(10.0);
-
-            let mut selection = selected;
-            let mut changed: Option<InstalledProfile> = None;
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(16.0))
-                .inner_margin(egui::Margin::same(16.0)).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("ВЕРСИЯ ДЛЯ ЗАПУСКА").size(9.0).strong().color(MUTED));
-                            egui::ComboBox::from_id_source("home_installed_profile_picker")
-                                .selected_text(if installed.is_empty() { "Нет установленных сборок".to_owned() }
-                                    else { installed.iter().find(|p| p.id == selection)
-                                        .map(|p| format!("{}  ·  {}", p.id, p.game_version))
-                                        .unwrap_or_else(|| "Выбери установленную сборку".to_owned()) })
-                                .width(330.0).show_ui(ui, |ui| {
-                                    for profile in &installed {
-                                        let label = format!("{}  ·  {}  ·  {}", profile.id, profile.game_version, profile.loader);
-                                        if ui.selectable_value(&mut selection, profile.id.clone(), label).changed() {
-                                            changed = Some(profile.clone());
-                                        }
-                                    }
-                                });
-                            if let Some(profile) = installed.iter().find(|p| p.id == selection) {
-                                ui.label(RichText::new(format!("Загрузчик: {}   ·   Minecraft {}", profile.loader, profile.game_version)).size(10.0).color(MUTED));
-                            } else {
-                                ui.label(RichText::new("Установи игру во вкладке «Minecraft → Версии».").size(10.0).color(MUTED));
-                            }
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let play = egui::Button::new(RichText::new(if self.launch_busy { "ПОДГОТОВКА…" } else { "▶  ИГРАТЬ" })
-                                .size(14.0).strong().color(Color32::from_rgb(15, 35, 28)))
-                                .fill(self.accent_color()).min_size(egui::vec2(178.0, 48.0)).rounding(Rounding::same(11.0));
-                            let play_response = ui.add_enabled(!installed.is_empty() && !self.launch_busy && !self.install_busy, play);
-                            paint_hover_feedback(ui, &play_response, self.accent_color(), 11.0);
-                            if play_response.clicked() { self.start_game(); }
-                        });
-                    });
-                    if self.launch_busy {
-                        ui.add_space(10.0);
-                        ui.label(RichText::new("Minecraft подготавливается. Загрузка файлов может занять несколько минут.").size(10.0).color(MUTED));
-                        if ui.button("Отменить подготовку").clicked() { self.cancel_launch(); }
-                    }
-                });
-
-            if let Some(profile) = changed {
-                self.config.selected_version = profile.game_version.clone();
-                self.config.selected_profile_id = if profile.id == profile.game_version { String::new() } else { profile.id.clone() };
-                self.config.selected_loader = profile.loader;
-                let _ = config::save(&self.config);
-            }
-            if installed.is_empty() {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Здесь отображаются только сборки, файлы которых уже установлены. Полный каталог релизов находится отдельно во вкладке «Версии».").size(11.0).color(MUTED));
-            }
-            ui.add_space(14.0);
+            ui.add_space(26.0);
             ui.columns(3, |columns| {
                 let cards = [
                     ("УСТАНОВЛЕНО", installed.len().to_string(), "Локальные игровые профили"),
@@ -1362,28 +1383,322 @@ impl MintyApp {
                     ("ПОТОКИ CPU", self.hardware.logical_cores.to_string(), "Потоки процессора"),
                 ];
                 for (index, (title, value, hint)) in cards.iter().enumerate() {
-                    egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0))
-                        .inner_margin(egui::Margin::same(13.0)).show(&mut columns[index], |ui| {
-                            ui.label(RichText::new(*title).size(9.0).strong().color(MUTED));
-                            ui.label(RichText::new(value).size(25.0).strong().color(TEXT));
-                            ui.label(RichText::new(*hint).size(9.0).color(MUTED));
+                    egui::Frame::none().fill(Color32::from_rgba_unmultiplied(20, 20, 21, 225))
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .rounding(Rounding::same(3.0))
+                        .inner_margin(egui::Margin::same(14.0)).show(&mut columns[index], |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.label(RichText::new(*title).size(9.5).strong().color(MUTED));
+                            ui.label(RichText::new(value).size(26.0).strong().color(TEXT));
+                            ui.label(RichText::new(*hint).size(10.0).color(MUTED));
                         });
                 }
             });
             ui.add_space(12.0);
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0))
+            egui::Frame::none().fill(Color32::from_rgba_unmultiplied(20, 20, 21, 225))
+                .stroke(Stroke::new(1.0, BORDER))
+                .rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("ПРОИЗВОДИТЕЛЬНОСТЬ").size(9.0).strong().color(MUTED));
-                            ui.label(RichText::new("Профиль «Слабый ПК»").strong().color(TEXT));
-                            ui.label(RichText::new("Снижает дальность прорисовки, частицы и графические эффекты.").size(10.0).color(MUTED));
+                            ui.label(RichText::new("ПРОИЗВОДИТЕЛЬНОСТЬ").size(9.5).strong().color(MUTED));
+                            ui.label(RichText::new("Режим «Слабый ПК»").strong().color(TEXT));
+                            ui.label(RichText::new("Снижает дальность прорисовки, частицы и графические эффекты.").size(10.5).color(MUTED));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.checkbox(&mut self.config.weak_pc_mode, "Включить").changed() { let _ = config::save(&self.config); }
                         });
                     });
                 });
+            if installed.is_empty() {
+                ui.add_space(10.0);
+                ui.label(RichText::new("Здесь отображаются только установленные версии. Полный каталог релизов — во вкладке «Minecraft → Версии».")
+                    .size(11.0).color(MUTED));
+            }
+        });
+    }
+
+    fn settings_hub(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        ui.label(RichText::new("Настройки").size(26.0).strong().color(TEXT));
+        ui.label(RichText::new("Разделы настроек Minty Launcher").size(11.5).color(MUTED));
+        ui.add_space(10.0);
+
+        // Real side/central panels guarantee the page receives the whole remaining rectangle,
+        // which fixes the empty settings area caused by the previous nested horizontal layout.
+        egui::SidePanel::left("minty_settings_nav")
+            .exact_width(196.0)
+            .resizable(false)
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(14, 14, 15, 215))
+                .stroke(Stroke::new(1.0, BORDER))
+                .inner_margin(egui::Margin::same(8.0)))
+            .show_inside(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    self.settings_tab_button(ui, self.ui_label("general"), SettingsTab::General);
+                    self.settings_tab_button(ui, self.ui_label("game"), SettingsTab::Game);
+                    self.settings_tab_button(ui, self.ui_label("java"), SettingsTab::Java);
+                    self.settings_tab_button(ui, self.ui_label("performance"), SettingsTab::Performance);
+                    self.settings_tab_button(ui, self.ui_label("appearance"), SettingsTab::Appearance);
+                    self.settings_tab_button(ui, self.ui_label("account"), SettingsTab::Account);
+                    self.settings_tab_button(ui, self.ui_label("storage"), SettingsTab::Storage);
+                    self.settings_tab_button(ui, self.ui_label("security"), SettingsTab::Security);
+                    self.settings_tab_button(ui, self.ui_label("updates"), SettingsTab::Updates);
+                    self.settings_tab_button(ui, self.ui_label("journal"), SettingsTab::Journal);
+                });
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().inner_margin(egui::Margin { left: 16.0, right: 0.0, top: 0.0, bottom: 0.0 }))
+            .show_inside(ui, |page_ui| {
+                match self.settings_tab {
+                    SettingsTab::General => self.settings_general_page(page_ui),
+                    SettingsTab::Game => self.settings_game_page(page_ui),
+                    SettingsTab::Java => self.settings_java_page(page_ui),
+                    SettingsTab::Performance => self.settings_performance_page(page_ui),
+                    SettingsTab::Appearance => self.settings_appearance_page(page_ui),
+                    SettingsTab::Account => self.settings_account_page(page_ui),
+                    SettingsTab::Storage => self.settings_storage_page(page_ui),
+                    SettingsTab::Security => self.settings_security_page(page_ui),
+                    SettingsTab::Updates => self.settings_updates_page(page_ui),
+                    SettingsTab::Journal => self.journal_page(page_ui),
+                }
+            });
+    }
+
+    fn settings_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: SettingsTab) {
+        let selected = self.settings_tab == tab;
+        let response = ui.add_sized([ui.available_width(), 38.0],
+            egui::Button::new(RichText::new(label).strong().size(12.0)
+                .color(if selected { Color32::WHITE } else { Color32::from_rgb(190, 192, 195) }))
+                .fill(if selected { Color32::from_rgb(54, 55, 57) } else { Color32::TRANSPARENT })
+                .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
+                .rounding(Rounding::same(2.0)));
+        paint_hover_feedback(ui, &response, self.accent_color(), 2.0);
+        if response.clicked() {
+            self.settings_tab = tab;
+            self.page_transition_started = Instant::now();
+        }
+        if selected {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(response.rect.left_top(), egui::vec2(3.0, response.rect.height())),
+                0.0, MINT);
+        }
+    }
+
+    fn mod_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        project: &ModProject,
+        requested: &mut Option<String>,
+        requested_version: &mut Option<(String, mods::ProjectVersion)>,
+        toggle: &mut Option<String>,
+    ) {
+        let expanded = self.mod_expanded.as_deref() == Some(project.slug.as_str());
+        egui::Frame::none()
+            .fill(Color32::from_rgba_unmultiplied(30, 30, 31, 235))
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(Rounding::same(3.0))
+            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+            .show(ui, |card| {
+                card.set_min_width(card.available_width());
+                let total = card.available_width();
+                let icon_size = 76.0;
+                let actions_width = 142.0;
+                let gap = 12.0;
+                let details_width = (total - icon_size - actions_width - gap * 2.0).max(120.0);
+                card.horizontal_top(|row| {
+                    row.spacing_mut().item_spacing.x = gap;
+                    // 1. Project picture
+                    let (icon_rect, _) = row.allocate_exact_size(egui::vec2(icon_size, icon_size), egui::Sense::hover());
+                    row.painter().rect_filled(icon_rect, Rounding::same(3.0), PANEL_LIGHT);
+                    let mut drawn = false;
+                    if let Some(url) = project.icon_url.clone() {
+                        self.request_mod_icon(&url);
+                        if let Some(texture) = self.mod_icons.get(&url) {
+                            row.painter().image(texture.id(), icon_rect,
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                            drawn = true;
+                        }
+                    }
+                    if !drawn {
+                        let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
+                        row.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, mark,
+                            FontId::proportional(32.0), MINT);
+                    }
+                    row.painter().rect_stroke(icon_rect, Rounding::same(3.0), Stroke::new(1.0, BORDER));
+
+                    // 2. Name, author, description, downloads
+                    row.allocate_ui_with_layout(egui::vec2(details_width, icon_size), Layout::top_down(Align::Min), |details| {
+                        details.set_width(details_width);
+                        details.spacing_mut().item_spacing.y = 3.0;
+                        details.add(egui::Label::new(RichText::new(&project.title).strong().size(15.0).color(TEXT)).truncate());
+                        details.add(egui::Label::new(RichText::new(format!("Автор: {}",
+                            if project.author.is_empty() { "сообщество" } else { project.author.as_str() }))
+                            .size(11.0).color(MUTED)).truncate());
+                        let description: String = project.description.chars().take(135).collect();
+                        let description = if project.description.chars().count() > 135 { format!("{description}…") } else { description };
+                        details.label(RichText::new(description).size(11.0).color(Color32::from_rgb(208, 209, 211)));
+                        details.horizontal_wrapped(|meta| {
+                            meta.spacing_mut().item_spacing.x = 10.0;
+                            meta.label(RichText::new(format!("Скачиваний: {}", format_compact(project.downloads)))
+                                .size(10.5).strong().color(MINT));
+                            if let Some(version) = &project.latest_version {
+                                meta.label(RichText::new(format!("Minecraft {version}")).size(10.5).color(MUTED));
+                            }
+                            for category in project.display_categories.iter().take(3) {
+                                meta.label(RichText::new(category.to_uppercase()).size(9.0).color(MUTED));
+                            }
+                        });
+                    });
+
+                    // 3. Actions
+                    row.allocate_ui_with_layout(egui::vec2(actions_width, icon_size), Layout::top_down(Align::Center), |actions| {
+                        actions.spacing_mut().item_spacing.y = 5.0;
+                        let open_only = self.mod_category == "modpack";
+                        let busy = self.mod_installing;
+                        let label = if open_only { "Открыть ↗" } else if busy { "Установка…" }
+                            else if self.mod_category == "world" { "Импортировать" } else { "Установить" };
+                        if mc_button(actions, label, egui::vec2(actions_width, 32.0), 12.5, !busy, !open_only).clicked() {
+                            if open_only { let _ = open::that(format!("https://modrinth.com/modpack/{}", project.slug)); }
+                            else { *requested = Some(project.slug.clone()); }
+                        }
+                        if !open_only {
+                            let text = if expanded { "Скрыть версии" } else { "Выбрать версию" };
+                            if mc_button(actions, text, egui::vec2(actions_width, 26.0), 11.0, true, false).clicked() {
+                                *toggle = Some(project.slug.clone());
+                            }
+                        }
+                        if actions.small_button("Страница на Modrinth").clicked() {
+                            let kind = if self.mod_category == "world" { "modpack" } else { self.mod_category.as_str() };
+                            let _ = open::that(format!("https://modrinth.com/{kind}/{}", project.slug));
+                        }
+                    });
+                });
+
+                // 4. Version picker
+                if expanded {
+                    card.add_space(8.0);
+                    card.separator();
+                    card.label(RichText::new("ВЕРСИИ ДЛЯ СКАЧИВАНИЯ").size(9.5).strong().color(MUTED));
+                    match self.mod_versions.get(&project.slug).cloned() {
+                        None => {
+                            card.label(RichText::new(if self.mod_versions_loading.contains(&project.slug) {
+                                "Загружаю список версий…".to_owned()
+                            } else { self.mod_version_status.clone() }).size(11.0).color(MUTED));
+                        }
+                        Some(list) if list.is_empty() => {
+                            card.label(RichText::new("Версий не найдено. Выключи фильтр совместимости, чтобы увидеть все версии проекта.")
+                                .size(11.0).color(GOLD));
+                        }
+                        Some(list) => {
+                            egui::ScrollArea::vertical()
+                                .id_source(("mod_versions_scroll", project.slug.as_str()))
+                                .max_height(230.0)
+                                .auto_shrink([false, true])
+                                .show(card, |scroll| {
+                                    scroll.spacing_mut().item_spacing.y = 6.0;
+                                    for version in &list {
+                                        egui::Frame::none().fill(Color32::from_rgb(40, 41, 43))
+                                            .rounding(Rounding::same(2.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                                            .show(scroll, |row| {
+                                                row.set_min_width(row.available_width());
+                                                let width = row.available_width();
+                                                row.horizontal(|top| {
+                                                    top.spacing_mut().item_spacing.x = 8.0;
+                                                    let (badge, badge_color) = match version.version_type.as_str() {
+                                                        "release" => ("РЕЛИЗ", MINT),
+                                                        "beta" => ("БЕТА", GOLD),
+                                                        _ => ("АЛЬФА", RED),
+                                                    };
+                                                    top.add_sized([(width - 120.0 - 8.0 * 2.0 - 44.0).max(60.0), 22.0],
+                                                        egui::Label::new(RichText::new(if version.version_number.is_empty() { &version.name } else { &version.version_number })
+                                                            .strong().size(12.5).color(TEXT)).truncate());
+                                                    top.label(RichText::new(badge).size(9.0).strong().color(badge_color));
+                                                    if mc_button(top, "Скачать", egui::vec2(100.0, 24.0), 11.5, !self.mod_installing, true).clicked() {
+                                                        *requested_version = Some((project.slug.clone(), version.clone()));
+                                                    }
+                                                });
+                                                row.label(RichText::new(format!("Minecraft: {}   ·   {}   ·   {}   ·   {} скачиваний",
+                                                    compact_versions(&version.game_versions),
+                                                    version.loaders.join(", "),
+                                                    version.date_published.get(..10).unwrap_or(""),
+                                                    format_compact(version.downloads)))
+                                                    .size(10.0).color(MUTED));
+                                            });
+                                    }
+                                });
+                        }
+                    }
+                }
+            });
+    }
+
+    fn request_mod_icon(&mut self, url: &str) {
+        if self.mod_icon_requested.contains(url) { return; }
+        self.mod_icon_requested.insert(url.to_owned());
+        let tx = self.icon_tx.clone();
+        let ctx = self.ctx.clone();
+        let url = url.to_owned();
+        thread::spawn(move || {
+            let result = mods::fetch_image_bytes(&url)
+                .map_err(|error| format!("{error:#}"))
+                .and_then(|bytes| image::load_from_memory(&bytes).map_err(|error| error.to_string()))
+                .map(|decoded| {
+                    let rgba = decoded.thumbnail(112, 112).to_rgba8();
+                    let (width, height) = rgba.dimensions();
+                    AvatarImage { width: width as usize, height: height as usize, rgba: rgba.into_raw() }
+                });
+            tx.send((url, result)).ok();
+            ctx.request_repaint();
+        });
+    }
+
+    fn load_mod_versions(&mut self, slug: String) {
+        if self.mod_versions.contains_key(&slug) || self.mod_versions_loading.contains(&slug) { return; }
+        self.mod_versions_loading.insert(slug.clone());
+        let game_version = if self.mod_filter_compatible {
+            if self.config.selected_version == "latest-release" { self.latest_release.clone() }
+            else { self.config.selected_version.clone() }
+        } else { String::new() };
+        let loader = if self.mod_filter_compatible { self.config.selected_loader.clone() } else { String::new() };
+        let category = if self.mod_category == "world" { "world".to_owned() } else { self.mod_category.clone() };
+        let tx = self.mod_versions_tx.clone();
+        let ctx = self.ctx.clone();
+        thread::spawn(move || {
+            let result = mods::list_versions(&slug, &game_version, &loader, &category)
+                .map_err(|error| format!("{error:#}"));
+            tx.send((slug, result)).ok();
+            ctx.request_repaint();
+        });
+    }
+
+    fn install_store_version(&mut self, slug: String, version: mods::ProjectVersion) {
+        if self.mod_installing { return; }
+        let category = self.mod_category.clone();
+        if category == "mod" && self.config.selected_loader == "Vanilla" {
+            self.mod_status = "Для модов сначала выбери Fabric, Forge, NeoForge или Quilt.".to_owned();
+            return;
+        }
+        let instance = self.profile_instance_dir();
+        let target_dir = match category.as_str() {
+            "mod" => instance.join("mods"),
+            "resourcepack" => instance.join("resourcepacks"),
+            "shader" => instance.join("shaderpacks"),
+            "world" => instance.join("saves"),
+            _ => instance,
+        };
+        let (tx, rx) = unbounded();
+        self.mod_install_rx = Some(rx);
+        self.mod_installing = true;
+        self.mod_status = format!("Скачиваю {slug} {}…", version.version_number);
+        let ctx = self.ctx.clone();
+        thread::spawn(move || {
+            tx.send(mods::install_version(&slug, &version, &category, &target_dir)
+                .map(|path| format!("Версия установлена: {}", path.display()))
+                .map_err(|error| format!("{error:#}"))).ok();
+            ctx.request_repaint();
         });
     }
 
@@ -1391,20 +1706,21 @@ impl MintyApp {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(RichText::new("MINECRAFT").size(9.0).strong().color(self.accent_color()));
-                ui.label(RichText::new(self.ui_label("minecraft")).size(25.0).strong().color(TEXT));
+                ui.label(RichText::new("JAVA EDITION").size(10.0).strong().color(MINT));
+                ui.label(RichText::new("Minecraft").size(28.0).strong().color(TEXT));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Открыть папку игры").clicked() {
+                if mc_button(ui, "Открыть папку игры", egui::vec2(180.0, 32.0), 12.0, true, false).clicked() {
                     let _ = std::fs::create_dir_all(&self.config.game_dir);
                     let _ = open::that(&self.config.game_dir);
                 }
             });
         });
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         let tabs_width = ui.available_width();
-        let tab_width = ((tabs_width - ui.spacing().item_spacing.x * 4.0) / 5.0).max(1.0);
+        let tab_width = (tabs_width / 5.0).clamp(84.0, 150.0);
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             self.minecraft_tab_button(ui, self.ui_label("builds"), MinecraftTab::Builds, tab_width);
             self.minecraft_tab_button(ui, self.ui_label("versions"), MinecraftTab::Versions, tab_width);
             self.minecraft_tab_button(ui, self.ui_label("profile"), MinecraftTab::Profile, tab_width);
@@ -1428,12 +1744,12 @@ impl MintyApp {
 
     fn minecraft_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: MinecraftTab, width: f32) {
         let selected = self.minecraft_tab == tab;
-        let response = ui.add_sized([width, 40.0],
-            egui::Button::new(RichText::new(label).strong().size(11.5)
-                .color(if selected { TEXT } else { MUTED }))
-                .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
+        let response = ui.add_sized([width, 42.0],
+            egui::Button::new(RichText::new(label.to_uppercase()).strong().size(11.5)
+                .color(if selected { Color32::WHITE } else { MUTED }))
+                .fill(Color32::TRANSPARENT)
                 .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
-                .rounding(Rounding::same(10.0)));
+                .rounding(Rounding::same(3.0)));
         paint_hover_feedback(ui, &response, self.accent_color(), 10.0);
         if response.clicked() {
             self.minecraft_tab = tab;
@@ -1446,10 +1762,10 @@ impl MintyApp {
         if selected {
             ui.painter().rect_filled(
                 egui::Rect::from_min_size(
-                    egui::pos2(response.rect.center().x - response.rect.width() * 0.20, response.rect.bottom() - 2.5),
-                    egui::vec2(response.rect.width() * 0.40, 2.5),
+                    egui::pos2(response.rect.left() + 6.0, response.rect.bottom() - 3.0),
+                    egui::vec2(response.rect.width() - 12.0, 3.0),
                 ),
-                Rounding::same(2.0), self.accent_color());
+                Rounding::same(0.0), MINT);
         }
     }
 
@@ -1464,7 +1780,7 @@ impl MintyApp {
         ui.label(RichText::new("Текущая сборка").size(20.0).strong().color(TEXT));
         ui.label(RichText::new("Профиль, который будет запущен кнопкой «Играть».").size(11.0).color(MUTED));
         ui.add_space(12.0);
-        egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+        egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
             .inner_margin(egui::Margin::same(16.0)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
@@ -1487,7 +1803,7 @@ impl MintyApp {
             ui.label(RichText::new("УСТАНОВЛЕННЫЕ ВЕРСИИ").size(9.0).strong().color(MUTED));
             ui.label(RichText::new(format!("{} профилей", installed.len())).size(10.0).color(MUTED));
         });
-        egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+        egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
             .inner_margin(egui::Margin::same(12.0)).show(ui, |ui| {
                 egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                     if installed.is_empty() {
@@ -1518,7 +1834,7 @@ impl MintyApp {
         ui.label(RichText::new(self.ui_label("profile")).size(23.0).strong().color(TEXT));
         ui.label(RichText::new("Аккаунт, аватар и внешний вид персонажа.").size(12.0).color(MUTED));
         ui.add_space(12.0);
-        egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+        egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
             .inner_margin(egui::Margin::same(15.0)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let _ = self.avatar_widget(ui, 64.0);
@@ -1589,14 +1905,16 @@ impl MintyApp {
                 ("Шейдеры", "shader"),
             ];
             let mut requested: Option<String> = None;
+            let mut requested_version: Option<(String, mods::ProjectVersion)> = None;
+            let mut toggle_versions: Option<String> = None;
             let mut reload_catalog = false;
 
             ui.horizontal(|ui| {
                 let side_width = 214.0_f32.min((ui.available_width() * 0.30).max(176.0));
                 egui::Frame::none()
                     .fill(PANEL)
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(42, 55, 64)))
-                    .rounding(Rounding::same(14.0))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(70, 71, 73)))
+                    .rounding(Rounding::same(3.0))
                     .inner_margin(egui::Margin::same(12.0))
                     .show(ui, |side| {
                         side.set_min_width(side_width);
@@ -1608,12 +1926,12 @@ impl MintyApp {
                         side.add_space(8.0);
                         if side.add_sized([side.available_width(), 34.0],
                             egui::Button::new("＋  Импортировать файлы")
-                                .fill(self.accent_color()).rounding(Rounding::same(9.0))).clicked() {
+                                .fill(self.accent_color()).rounding(Rounding::same(3.0))).clicked() {
                             self.import_game_files();
                         }
                         if side.add_sized([side.available_width(), 32.0],
                             egui::Button::new("Открыть папку mods")
-                                .fill(PANEL_LIGHT).rounding(Rounding::same(9.0))).clicked() {
+                                .fill(PANEL_LIGHT).rounding(Rounding::same(3.0))).clicked() {
                             self.open_java_mods_folder();
                         }
                         side.add_space(10.0);
@@ -1659,7 +1977,7 @@ impl MintyApp {
                                     .color(if selected { TEXT } else { MUTED }))
                                     .fill(if selected { PANEL_LIGHT } else { PANEL })
                                     .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
-                                    .rounding(Rounding::same(9.0)));
+                                    .rounding(Rounding::same(3.0)));
                             paint_hover_feedback(tabs, &response, self.accent_color(), 9.0);
                             if response.clicked() && self.mod_category != category {
                                 self.mod_category = category.to_owned();
@@ -1682,7 +2000,7 @@ impl MintyApp {
                         if toolbar.add_enabled(!self.mod_searching && !self.mod_installing,
                             egui::Button::new(if self.mod_searching { "Поиск…" } else { "Найти" })
                                 .min_size(egui::vec2(78.0, 36.0)).fill(self.accent_color())
-                                .rounding(Rounding::same(9.0))).clicked() {
+                                .rounding(Rounding::same(3.0))).clicked() {
                             self.search_mod_store();
                         }
                         let old_sort = self.mod_sort.clone();
@@ -1723,7 +2041,7 @@ impl MintyApp {
                             .size(9.5).color(GOLD));
                     }
                     if self.mods.is_empty() {
-                        egui::Frame::none().fill(PANEL).rounding(Rounding::same(12.0))
+                        egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                             .inner_margin(egui::Margin::same(20.0)).show(main, |empty| {
                                 empty.set_min_width(empty.available_width());
                                 empty.vertical_centered(|center| {
@@ -1736,72 +2054,26 @@ impl MintyApp {
                     } else {
                         let projects = self.mods.clone();
                         for project in &projects {
-                            egui::Frame::none()
-                                .fill(PANEL)
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(42, 55, 64)))
-                                .rounding(Rounding::same(12.0))
-                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                .show(main, |card| {
-                                    card.set_min_width(card.available_width());
-                                    card.horizontal(|row| {
-                                        let (icon_rect, _) = row.allocate_exact_size(egui::vec2(58.0, 58.0), egui::Sense::hover());
-                                        row.painter().rect_filled(icon_rect, Rounding::same(12.0), PANEL_LIGHT);
-                                        let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
-                                        row.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, mark,
-                                            FontId::proportional(25.0), self.accent_color());
-                                        row.add_space(5.0);
-                                        let details_width = (row.available_width() - 190.0).max(90.0);
-                                        row.allocate_ui_with_layout(
-                                            egui::vec2(details_width, 58.0),
-                                            Layout::top_down(Align::Min),
-                                            |details| {
-                                                details.set_min_width(details_width);
-                                                details.add_sized([details_width, 19.0],
-                                                    egui::Label::new(RichText::new(&project.title).strong().size(12.5).color(TEXT)).truncate());
-                                                details.add_sized([details_width, 16.0],
-                                                    egui::Label::new(RichText::new(format!("Автор: {}", if project.author.is_empty() { "сообщество" } else { project.author.as_str() }))
-                                                        .size(9.5).color(MUTED)).truncate());
-                                                details.label(RichText::new(&project.description).size(9.5).color(TEXT));
-                                                details.horizontal(|meta| {
-                                                    meta.label(RichText::new(format!("Загрузки: {}", format_compact(project.downloads)))
-                                                        .size(9.0).color(self.accent_color()));
-                                                    if let Some(version) = &project.latest_version {
-                                                        meta.label(RichText::new(format!("Версия проекта: {version}")).size(9.0).color(MUTED));
-                                                    }
-                                                    if !project.project_type.is_empty() {
-                                                        meta.label(RichText::new(project.project_type.to_uppercase()).size(8.5).color(MUTED));
-                                                    }
-                                                });
-                                            },
-                                        );
-                                        row.with_layout(Layout::right_to_left(Align::Center), |actions| {
-                                            let open_only = self.mod_category == "modpack";
-                                            let label = if open_only { "Открыть ↗" } else if self.mod_installing { "Установка…" }
-                                                else if self.mod_category == "world" { "Импортировать" } else { "Установить" };
-                                            let button = actions.add_enabled(!self.mod_installing,
-                                                egui::Button::new(label).min_size(egui::vec2(112.0, 36.0))
-                                                    .fill(if open_only { PANEL_LIGHT } else { self.accent_color() })
-                                                    .rounding(Rounding::same(9.0)));
-                                            if button.clicked() {
-                                                if open_only { let _ = open::that(format!("https://modrinth.com/modpack/{}", project.slug)); }
-                                                else { requested = Some(project.slug.clone()); }
-                                            }
-                                            if actions.small_button("Страница").clicked() {
-                                                let kind = if self.mod_category == "world" { "modpack" } else { self.mod_category.as_str() };
-                                                let _ = open::that(format!("https://modrinth.com/{kind}/{}", project.slug));
-                                            }
-                                        });
-                                    });
-                                });
+                            self.mod_card(main, project, &mut requested, &mut requested_version, &mut toggle_versions);
                             main.add_space(7.0);
                         }
                     }
                 });
             });
             if let Some(slug) = requested { self.install_store_project(slug); }
+            if let Some(slug) = toggle_versions {
+                if self.mod_expanded.as_deref() == Some(slug.as_str()) {
+                    self.mod_expanded = None;
+                } else {
+                    self.mod_version_status.clear();
+                    self.mod_expanded = Some(slug.clone());
+                    self.load_mod_versions(slug);
+                }
+            }
+            if let Some((slug, version)) = requested_version { self.install_store_version(slug, version); }
             if !self.mod_issues.is_empty() {
                 ui.add_space(10.0);
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(12.0))
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                     .inner_margin(egui::Margin::same(10.0)).show(ui, |issues| {
                         issues.label(RichText::new("ПРОВЕРКА МОДОВ").size(9.0).strong().color(MUTED));
                         for issue in &self.mod_issues {
@@ -1821,7 +2093,7 @@ impl MintyApp {
             ui.label(RichText::new("Minecraft Bedrock").size(23.0).strong().color(TEXT));
             ui.label(RichText::new("Отдельный запуск Bedrock Edition и импорт дополнений.").size(12.0).color(MUTED));
             ui.add_space(12.0);
-            egui::Frame::none().fill(Color32::from_rgb(29, 49, 45)).rounding(Rounding::same(16.0))
+            egui::Frame::none().fill(Color32::from_rgb(34, 40, 34)).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(17.0)).stroke(Stroke::new(1.0, self.accent_color())).show(ui, |ui| {
                     ui.label(RichText::new("BEDROCK EDITION").size(9.0).strong().color(self.accent_color()));
                     ui.add_space(5.0);
@@ -1839,8 +2111,8 @@ impl MintyApp {
                                 });
                         });
                         if ui.add_sized([205.0, 43.0],
-                            egui::Button::new(RichText::new("▶  Запустить выбранную").strong().color(Color32::from_rgb(15, 35, 28)))
-                                .fill(self.accent_color()).rounding(Rounding::same(10.0))).clicked() {
+                            egui::Button::new(RichText::new("▶  Запустить выбранную").strong().color(Color32::from_rgb(255, 255, 255)))
+                                .fill(self.accent_color()).rounding(Rounding::same(3.0))).clicked() {
                             let preview = self.config.bedrock_channel == "Preview";
                             match bedrock::launch(preview) {
                                 Ok(()) => self.log(if preview { "Запускаю Minecraft Preview." } else { "Запускаю Minecraft Bedrock Stable." }),
@@ -1857,7 +2129,7 @@ impl MintyApp {
             ui.label(RichText::new("НАЙДЕННЫЕ ДАННЫЕ BEDROCK").size(9.0).strong().color(MUTED));
             let installations = bedrock::installations();
             let has_preview = installations.iter().any(|item| item.channel == "Minecraft Preview");
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(13.0)).show(ui, |ui| {
                     if installations.is_empty() {
                         ui.label(RichText::new("Папка com.mojang пока не найдена. Запусти Bedrock хотя бы один раз — затем здесь появятся папки дополнений и миров.")
@@ -1900,7 +2172,7 @@ impl MintyApp {
             .size(11.0).color(MUTED));
         ui.add_space(12.0);
         let mut requested_install: Option<String> = None;
-        egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+        egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
             .inner_margin(egui::Margin::same(15.0)).show(ui, |ui| {
                 let mut settings_changed = false;
                 ui.horizontal(|ui| {
@@ -1985,7 +2257,7 @@ impl MintyApp {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 let label = if self.config.selected_version == version.id { "Установить снова" } else { "Выбрать и скачать" };
                                 if ui.add_enabled(!self.install_busy && !self.launch_busy,
-                                    egui::Button::new(label).rounding(Rounding::same(8.0))).clicked() {
+                                    egui::Button::new(label).rounding(Rounding::same(3.0))).clicked() {
                                     requested_install = Some(version.id.clone());
                                 }
                             });
@@ -2020,7 +2292,7 @@ impl MintyApp {
                 });
             });
             ui.add_space(10.0);
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         for (label, action, enabled) in [
@@ -2031,7 +2303,7 @@ impl MintyApp {
                             ("Очистить всё", 4, true),
                         ] {
                             if ui.add_enabled(enabled, egui::Button::new(label).min_size(egui::vec2(118.0, 32.0))
-                                .fill(PANEL_LIGHT).rounding(Rounding::same(8.0))).clicked() {
+                                .fill(PANEL_LIGHT).rounding(Rounding::same(3.0))).clicked() {
                                 match action {
                                     0 => self.undo_skin(),
                                     1 => self.redo_skin(),
@@ -2055,14 +2327,14 @@ impl MintyApp {
                     let selected = self.skin_region == label;
                     if ui.add_sized([112.0, 32.0],
                         egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
-                            .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
+                            .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(3.0))).clicked() {
                         self.skin_region = label.to_owned();
                     }
                 }
             });
             ui.add_space(9.0);
             ui.columns(2, |columns| {
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                     .inner_margin(egui::Margin::same(12.0)).show(&mut columns[0], |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("UV-АТЛАС").size(9.0).strong().color(MUTED));
@@ -2080,7 +2352,7 @@ impl MintyApp {
                         ui.label(RichText::new("Левая кнопка мыши рисует. Крупная сетка отмечает блоки 8×8.")
                             .size(9.0).color(MUTED));
                     });
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                     .inner_margin(egui::Margin::same(12.0)).show(&mut columns[1], |ui| {
                         ui.label(RichText::new("ИНСТРУМЕНТЫ").size(9.0).strong().color(MUTED));
                         ui.horizontal_wrapped(|ui| {
@@ -2089,7 +2361,7 @@ impl MintyApp {
                                 let selected = self.skin_tool == tool;
                                 if ui.add_sized([103.0, 32.0],
                                     egui::Button::new(RichText::new(name).strong().color(if selected { TEXT } else { MUTED }))
-                                        .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
+                                        .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(3.0))).clicked() {
                                     self.skin_tool = tool;
                                 }
                             }
@@ -2200,7 +2472,7 @@ impl MintyApp {
         }
         if let Some(texture)=self.skin_texture.as_ref(){
             let (rect,_)=ui.allocate_exact_size(egui::vec2(190.0,245.0),egui::Sense::hover());
-            let painter=ui.painter();painter.rect_filled(rect,Rounding::same(8.0),PANEL_LIGHT);
+            let painter=ui.painter();painter.rect_filled(rect,Rounding::same(3.0),PANEL_LIGHT);
             let uv=|x:u32,y:u32,w:u32,h:u32|egui::Rect::from_min_max(egui::pos2(x as f32/64.0,y as f32/64.0),
                 egui::pos2((x+w) as f32/64.0,(y+h) as f32/64.0));
             let draw=|dest:egui::Rect,src:egui::Rect|painter.image(texture.id(),dest,src,Color32::WHITE);
@@ -2249,7 +2521,7 @@ impl MintyApp {
             self.crash_report = Some(crash::analyze_latest().unwrap_or_else(|error| format!("Не удалось разобрать журнал: {error:#}")));
         }
         if let Some(report) = &self.crash_report {
-            egui::Frame::none().fill(PANEL_LIGHT).rounding(Rounding::same(12.0))
+            egui::Frame::none().fill(PANEL_LIGHT).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(12.0)).show(ui, |ui| {
                     ui.label(RichText::new("ОТЧЁТ CRASH REPORTER").size(9.0).strong().color(self.accent_color()));
                     ui.label(RichText::new(report).size(10.0).color(TEXT));
@@ -2257,7 +2529,7 @@ impl MintyApp {
                 });
         }
         ui.add_space(10.0);
-        egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0)).inner_margin(egui::Margin::same(13.0)).show(ui, |ui| {
+        egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0)).inner_margin(egui::Margin::same(13.0)).show(ui, |ui| {
             egui::ScrollArea::vertical().max_height(ui.available_height()).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
                 if self.logs.is_empty() {
                     ui.label(RichText::new("Записей пока нет. Запусти Minecraft или измени настройки.").color(MUTED));
@@ -2269,90 +2541,11 @@ impl MintyApp {
         });
     }
 
-    fn settings_hub(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(4.0);
-        ui.label(RichText::new("Настройки лаунчера").size(25.0).strong().color(TEXT));
-        ui.label(RichText::new("Разделы настроек Minty Launcher").size(11.0).color(MUTED));
-        ui.add_space(12.0);
-
-        let content_height = ui.available_height();
-        ui.horizontal(|ui| {
-            egui::Frame::none().fill(PANEL)
-                .stroke(Stroke::new(1.0, Color32::from_rgb(39, 51, 61)))
-                .rounding(Rounding::same(14.0))
-                .inner_margin(egui::Margin::same(9.0)).show(ui, |ui| {
-                    ui.set_min_width(176.0);
-                    ui.set_min_height((content_height - 18.0).max(220.0));
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        ui.set_width(158.0);
-                        ui.vertical(|ui| {
-                            self.settings_tab_button(ui, self.ui_label("general"), SettingsTab::General);
-                            self.settings_tab_button(ui, self.ui_label("game"), SettingsTab::Game);
-                            self.settings_tab_button(ui, self.ui_label("java"), SettingsTab::Java);
-                            self.settings_tab_button(ui, self.ui_label("performance"), SettingsTab::Performance);
-                            self.settings_tab_button(ui, self.ui_label("appearance"), SettingsTab::Appearance);
-                            self.settings_tab_button(ui, self.ui_label("account"), SettingsTab::Account);
-                            self.settings_tab_button(ui, self.ui_label("storage"), SettingsTab::Storage);
-                            self.settings_tab_button(ui, self.ui_label("security"), SettingsTab::Security);
-                            self.settings_tab_button(ui, self.ui_label("updates"), SettingsTab::Updates);
-                            self.settings_tab_button(ui, self.ui_label("journal"), SettingsTab::Journal);
-                        });
-                    });
-                });
-            ui.add_space(12.0);
-
-            // allocate_ui_with_layout gives the active settings page the entire remaining
-            // viewport instead of shrinking it to the width of its first label or control.
-            let page_width = ui.available_width();
-            ui.allocate_ui_with_layout(
-                egui::vec2(page_width, content_height),
-                Layout::top_down(Align::Min),
-                |page_ui| {
-                    page_ui.set_min_width(page_width);
-                    page_ui.set_min_height(content_height);
-                    match self.settings_tab {
-                        SettingsTab::General => self.settings_general_page(page_ui),
-                        SettingsTab::Game => self.settings_game_page(page_ui),
-                        SettingsTab::Java => self.settings_java_page(page_ui),
-                        SettingsTab::Performance => self.settings_performance_page(page_ui),
-                        SettingsTab::Appearance => self.settings_appearance_page(page_ui),
-                        SettingsTab::Account => self.settings_account_page(page_ui),
-                        SettingsTab::Storage => self.settings_storage_page(page_ui),
-                        SettingsTab::Security => self.settings_security_page(page_ui),
-                        SettingsTab::Updates => self.settings_updates_page(page_ui),
-                        SettingsTab::Journal => self.journal_page(page_ui),
-                    }
-                },
-            );
-        });
-    }
-
-    fn settings_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: SettingsTab) {
-        let selected = self.settings_tab == tab;
-        let response = ui.add_sized([158.0, 38.0],
-            egui::Button::new(RichText::new(label).strong().size(10.5)
-                .color(if selected { TEXT } else { MUTED }))
-                .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
-                .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
-                .rounding(Rounding::same(10.0)));
-        paint_hover_feedback(ui, &response, self.accent_color(), 10.0);
-        if response.clicked() {
-            self.settings_tab = tab;
-            self.page_transition_started = Instant::now();
-        }
-        if selected {
-            ui.painter().rect_filled(
-                egui::Rect::from_min_size(response.rect.left_center() - egui::vec2(4.0, 10.0),
-                    egui::vec2(2.5, 20.0)),
-                Rounding::same(2.0), self.accent_color());
-        }
-    }
-
     fn settings_save_button(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
         if ui.add_sized([185.0, 39.0],
-            egui::Button::new(RichText::new("СОХРАНИТЬ").strong().color(Color32::from_rgb(15, 35, 28)))
-                .fill(self.accent_color()).rounding(Rounding::same(9.0))).clicked() {
+            egui::Button::new(RichText::new("СОХРАНИТЬ").strong().color(Color32::from_rgb(255, 255, 255)))
+                .fill(self.accent_color()).rounding(Rounding::same(3.0))).clicked() {
             if self.settings_tab == SettingsTab::Game {
                 self.save_settings();
             } else if let Err(error) = config::save(&self.config) {
@@ -2367,7 +2560,7 @@ impl MintyApp {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Основные").size(21.0).strong().color(TEXT));
             ui.label(RichText::new("Имя игрока и общие параметры интерфейса.").size(11.0).color(MUTED));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     ui.label(RichText::new("ОФЛАЙН-ИМЯ").size(9.0).strong().color(MUTED));
                     ui.add(egui::TextEdit::singleline(&mut self.config.offline_username).desired_width(330.0));
@@ -2397,7 +2590,7 @@ impl MintyApp {
     fn settings_game_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Minecraft").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     ui.label(RichText::new("ПАПКА JAVA EDITION").size(9.0).strong().color(MUTED));
                     ui.horizontal(|ui| {
@@ -2434,7 +2627,7 @@ impl MintyApp {
     fn settings_java_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Java Runtime").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     ui.label(RichText::new("ПУТЬ К JAVA").size(9.0).strong().color(MUTED));
                     ui.add(egui::TextEdit::singleline(&mut self.config.java_path).desired_width(420.0)
@@ -2463,7 +2656,7 @@ impl MintyApp {
     fn settings_performance_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Производительность").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     ui.label(RichText::new(&self.hardware.cpu_name).strong().color(TEXT));
                     ui.label(RichText::new(format!("{} ГБ ОЗУ · {} потоков CPU", self.hardware.total_memory_gb, self.hardware.logical_cores))
@@ -2482,7 +2675,7 @@ impl MintyApp {
                     }
                     ui.separator();
                     if ui.add_enabled(!self.benchmark_busy, egui::Button::new(if self.benchmark_busy { "Тест выполняется…" } else { "Запустить тест CPU и памяти" })
-                        .fill(self.accent_color()).rounding(Rounding::same(8.0))).clicked() {
+                        .fill(self.accent_color()).rounding(Rounding::same(3.0))).clicked() {
                         self.start_benchmark();
                     }
                     if let Some(result) = &self.benchmark_result {
@@ -2507,7 +2700,7 @@ impl MintyApp {
     fn settings_appearance_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Оформление").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     ui.label(RichText::new("АКЦЕНТНЫЙ ЦВЕТ").size(9.0).strong().color(MUTED));
                     ui.horizontal_wrapped(|ui| {
@@ -2517,7 +2710,7 @@ impl MintyApp {
                             configure_style(ui.ctx(), accent);
                         }
                         for (name, rgb) in [
-                            ("Minty", [145, 226, 183]), ("Океан", [104, 190, 219]),
+                            ("Minecraft", [82, 165, 53]), ("Minty", [145, 226, 183]), ("Океан", [104, 190, 219]),
                             ("Лаванда", [174, 145, 224]), ("Янтарь", [232, 184, 104]),
                             ("Рубин", [220, 105, 115]),
                         ] {
@@ -2560,7 +2753,7 @@ impl MintyApp {
     fn settings_account_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Аккаунт").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     if let Some(account) = self.account.clone() {
                         ui.label(RichText::new(format!("Выполнен вход: {}", account.name)).strong().color(TEXT));
@@ -2587,7 +2780,7 @@ impl MintyApp {
     fn settings_storage_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Файлы и хранилище").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     let paths = [
                         ("Minecraft", self.config.game_dir.clone()),
@@ -2620,7 +2813,7 @@ impl MintyApp {
     fn settings_security_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Безопасность").size(21.0).strong().color(TEXT));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     ui.label(RichText::new("Контроль загрузок").strong().color(self.accent_color()));
                     ui.label(RichText::new("Minty проверяет хеши там, где их публикует источник, и отклоняет файлы при несовпадении.")
@@ -2644,7 +2837,7 @@ impl MintyApp {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.label(RichText::new("Обновления").size(21.0).strong().color(TEXT));
             ui.label(RichText::new(format!("Установлена версия {}", env!("CARGO_PKG_VERSION"))).size(11.0).color(MUTED));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
                     if let Some(info) = &self.update_info {
                         ui.label(RichText::new(format!("Доступна версия {}", info.version)).strong().color(self.accent_color()));
@@ -2697,9 +2890,8 @@ impl MintyApp {
     }
 
     fn footer(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        ui.separator();
-        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+        ui.add_space(2.0);
+        ui.with_layout(Layout::top_down(Align::Min), |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("●").color(if self.error.is_some() { RED } else { MINT }).size(10.0));
                 ui.label(RichText::new(&self.status).size(10.0).color(MUTED));
@@ -2707,7 +2899,7 @@ impl MintyApp {
         });
         if let Some((code, url, message)) = &self.device_code {
             ui.add_space(6.0);
-            egui::Frame::none().fill(PANEL_LIGHT).rounding(Rounding::same(8.0)).inner_margin(egui::Margin::same(9.0)).show(ui, |ui| {
+            egui::Frame::none().fill(PANEL_LIGHT).rounding(Rounding::same(3.0)).inner_margin(egui::Margin::same(9.0)).show(ui, |ui| {
                 ui.label(RichText::new(message).size(10.0).color(TEXT));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(code).size(19.0).strong().color(MINT));
@@ -2736,7 +2928,7 @@ impl MintyApp {
                 ("Не удалось выполнить действие", "Открой подробности ниже. Полный текст ошибки можно скопировать и отправить в поддержку.")
             };
             egui::Frame::none().fill(Color32::from_rgb(55, 35, 38))
-                .rounding(Rounding::same(10.0)).inner_margin(egui::Margin::same(10.0))
+                .rounding(Rounding::same(3.0)).inner_margin(egui::Margin::same(10.0))
                 .show(ui, |ui| {
                     ui.label(RichText::new(heading).strong().color(RED));
                     ui.label(RichText::new(hint).size(10.0).color(TEXT));
@@ -2751,6 +2943,143 @@ impl MintyApp {
                 });
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NavIcon { Home, Block, Gear }
+
+fn sidebar_divider(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(12, 12, 13));
+}
+
+/// Vector icons drawn with the painter, so they never depend on font glyph coverage.
+fn draw_nav_icon(painter: &egui::Painter, icon: NavIcon, c: egui::Pos2, selected: bool) {
+    let dim = |color: Color32| if selected { color } else { color.linear_multiply(0.82) };
+    match icon {
+        NavIcon::Block => {
+            let top = vec![egui::pos2(c.x, c.y - 12.0), egui::pos2(c.x + 12.0, c.y - 6.0),
+                egui::pos2(c.x, c.y), egui::pos2(c.x - 12.0, c.y - 6.0)];
+            let left = vec![egui::pos2(c.x - 12.0, c.y - 6.0), egui::pos2(c.x, c.y),
+                egui::pos2(c.x, c.y + 12.0), egui::pos2(c.x - 12.0, c.y + 6.0)];
+            let right = vec![egui::pos2(c.x, c.y), egui::pos2(c.x + 12.0, c.y - 6.0),
+                egui::pos2(c.x + 12.0, c.y + 6.0), egui::pos2(c.x, c.y + 12.0)];
+            painter.add(egui::Shape::convex_polygon(top, dim(Color32::from_rgb(98, 164, 56)), Stroke::new(1.0, Color32::from_rgb(40, 72, 24))));
+            painter.add(egui::Shape::convex_polygon(left, dim(Color32::from_rgb(134, 96, 67)), Stroke::new(1.0, Color32::from_rgb(58, 40, 27))));
+            painter.add(egui::Shape::convex_polygon(right, dim(Color32::from_rgb(104, 72, 48)), Stroke::new(1.0, Color32::from_rgb(58, 40, 27))));
+        }
+        NavIcon::Home => {
+            let color = dim(Color32::from_rgb(222, 223, 225));
+            let roof = vec![egui::pos2(c.x - 12.0, c.y - 1.0), egui::pos2(c.x, c.y - 12.0), egui::pos2(c.x + 12.0, c.y - 1.0)];
+            painter.add(egui::Shape::convex_polygon(roof, color, Stroke::NONE));
+            painter.rect_filled(egui::Rect::from_min_max(egui::pos2(c.x - 8.0, c.y - 1.0), egui::pos2(c.x + 8.0, c.y + 10.0)), 0.0, color);
+            painter.rect_filled(egui::Rect::from_min_max(egui::pos2(c.x - 2.5, c.y + 3.0), egui::pos2(c.x + 2.5, c.y + 10.0)), 0.0, SIDEBAR);
+        }
+        NavIcon::Gear => {
+            let color = dim(Color32::from_rgb(222, 223, 225));
+            for index in 0..8 {
+                let angle = index as f32 * std::f32::consts::TAU / 8.0;
+                let (sin, cos) = angle.sin_cos();
+                painter.line_segment(
+                    [egui::pos2(c.x + cos * 7.0, c.y + sin * 7.0), egui::pos2(c.x + cos * 11.5, c.y + sin * 11.5)],
+                    Stroke::new(3.4, color));
+            }
+            painter.circle_stroke(c, 7.0, Stroke::new(3.2, color));
+        }
+    }
+}
+
+/// Minecraft-launcher style bevelled button. `primary` is the green PLAY style.
+fn mc_button(ui: &mut egui::Ui, text: &str, size: egui::Vec2, font_size: f32, enabled: bool, primary: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    let hover = enabled && response.hovered();
+    let pressed = enabled && response.is_pointer_button_down_on();
+    let (base, light, dark) = if !enabled {
+        (Color32::from_rgb(66, 67, 68), Color32::from_rgb(82, 83, 85), Color32::from_rgb(50, 51, 52))
+    } else if primary {
+        if hover { (Color32::from_rgb(72, 150, 46), Color32::from_rgb(118, 202, 82), Color32::from_rgb(42, 104, 28)) }
+        else { (Color32::from_rgb(60, 133, 39), Color32::from_rgb(98, 178, 68), Color32::from_rgb(36, 90, 23)) }
+    } else if hover {
+        (Color32::from_rgb(92, 93, 96), Color32::from_rgb(124, 125, 129), Color32::from_rgb(52, 53, 55))
+    } else {
+        (Color32::from_rgb(74, 75, 78), Color32::from_rgb(106, 107, 111), Color32::from_rgb(46, 47, 49))
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, Color32::from_rgb(10, 10, 10));
+    let inner = rect.shrink(2.0);
+    painter.rect_filled(inner, 1.0, base);
+    let bevel = (size.y * 0.07).clamp(2.0, 4.0);
+    if !pressed {
+        painter.rect_filled(egui::Rect::from_min_size(inner.left_top(), egui::vec2(inner.width(), bevel)), 1.0, light);
+        painter.rect_filled(egui::Rect::from_min_size(egui::pos2(inner.left(), inner.bottom() - bevel - 1.0),
+            egui::vec2(inner.width(), bevel + 1.0)), 1.0, dark);
+    } else {
+        painter.rect_filled(egui::Rect::from_min_size(inner.left_top(), egui::vec2(inner.width(), bevel + 1.0)), 1.0, dark);
+    }
+    let center = rect.center() + if pressed { egui::vec2(0.0, 1.0) } else { egui::Vec2::ZERO };
+    let font = FontId::proportional(font_size);
+    let text_color = if enabled { Color32::WHITE } else { Color32::from_rgb(140, 141, 143) };
+    painter.text(center + egui::vec2(1.5, 1.5), egui::Align2::CENTER_CENTER, text, font.clone(), Color32::from_black_alpha(150));
+    painter.text(center, egui::Align2::CENTER_CENTER, text, font, text_color);
+    if hover { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+    response
+}
+
+fn compact_versions(versions: &[String]) -> String {
+    match versions.len() {
+        0 => "—".to_owned(),
+        1..=3 => versions.join(", "),
+        count => format!("{} … {} ({count})", versions[0], versions[count - 1]),
+    }
+}
+
+/// A small tileable dirt-like texture, scaled up with nearest filtering for the pixel look.
+fn make_background_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    const SIZE: usize = 32;
+    let mut pixels = Vec::with_capacity(SIZE * SIZE);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let mut hash = (x as u32).wrapping_mul(374_761_393) ^ (y as u32).wrapping_mul(668_265_263);
+            hash = (hash ^ (hash >> 13)).wrapping_mul(1_274_126_177);
+            hash ^= hash >> 16;
+            let roll = hash % 100;
+            let (r, g, b) = if roll < 6 { (60, 60, 62) }
+                else if roll < 30 { (46, 38, 31) }
+                else if roll < 72 { (38, 31, 26) }
+                else { (31, 26, 22) };
+            pixels.push(Color32::from_rgb(r, g, b));
+        }
+    }
+    ctx.load_texture(
+        "minty-dirt-background",
+        egui::ColorImage { size: [SIZE, SIZE], pixels },
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Nearest,
+            wrap_mode: egui::TextureWrapMode::Repeat,
+            mipmap_mode: None,
+        },
+    )
+}
+
+fn paint_background(painter: &egui::Painter, rect: egui::Rect, texture: &egui::TextureHandle) {
+    let tile = 192.0;
+    painter.image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(rect.width() / tile, rect.height() / tile)),
+        Color32::WHITE,
+    );
+    let mut mesh = egui::Mesh::default();
+    let top = Color32::from_black_alpha(70);
+    let bottom = Color32::from_black_alpha(215);
+    mesh.colored_vertex(rect.left_top(), top);
+    mesh.colored_vertex(rect.right_top(), top);
+    mesh.colored_vertex(rect.right_bottom(), bottom);
+    mesh.colored_vertex(rect.left_bottom(), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn titlebar_control_button(ui: &mut egui::Ui, name: &str, close: bool) -> egui::Response {
@@ -2770,7 +3099,7 @@ fn titlebar_control_button(ui: &mut egui::Ui, name: &str, close: bool) -> egui::
             mix(base.r(), hover_color.r(), amount),
             mix(base.g(), hover_color.g(), amount),
             mix(base.b(), hover_color.b(), amount));
-        ui.painter().rect_filled(rect.shrink2(egui::vec2(1.0, 1.0)), Rounding::same(7.0), fill);
+        ui.painter().rect_filled(rect.shrink2(egui::vec2(1.0, 1.0)), Rounding::same(3.0), fill);
     }
     let center = rect.center();
     let icon = if close && response.hovered() { Color32::WHITE } else { Color32::from_rgb(190, 203, 203) };
@@ -2878,29 +3207,33 @@ impl eframe::App for MintyApp {
             self.splash_screen(ctx);
             return;
         }
-        self.top_navigation(ctx);
+        self.sidebar(ctx);
+        egui::TopBottomPanel::bottom("status_footer")
+            .frame(egui::Frame::none().fill(Color32::from_rgb(14, 14, 15))
+                .inner_margin(egui::Margin::symmetric(18.0, 4.0)))
+            .show(ctx, |ui| self.footer(ui));
+        if self.page == Page::Home { self.play_bar(ctx); }
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(18.0, 14.0)))
+            .frame(egui::Frame::none().fill(BG))
             .show(ctx, |ui| {
-                egui::TopBottomPanel::bottom("status_footer")
-                    .frame(egui::Frame::none().fill(BG))
-                    .show_inside(ui, |ui| self.footer(ui));
-
-                let body_size = ui.available_size();
-                ui.allocate_ui_with_layout(body_size, Layout::top_down(Align::Min), |page_ui| {
-                    page_ui.set_min_width(body_size.x);
-                    page_ui.set_min_height(body_size.y);
-                    let transition = if self.config.enable_animations {
-                        (self.page_transition_started.elapsed().as_secs_f32() / 0.22).clamp(0.0, 1.0)
-                    } else { 1.0 };
-                    page_ui.set_opacity(transition);
-                    page_ui.add_space((1.0 - transition) * 10.0);
-                    match self.page {
-                        Page::Home => self.home_page(page_ui),
-                        Page::Minecraft => self.minecraft_page(page_ui),
-                        Page::Settings => self.settings_hub(page_ui),
-                    }
-                    if transition < 1.0 { ctx.request_repaint_after(Duration::from_millis(16)); }
+                paint_background(ui.painter(), ui.max_rect(), &self.bg_texture);
+                egui::Frame::none().inner_margin(egui::Margin::symmetric(22.0, 14.0)).show(ui, |ui| {
+                    let body_size = ui.available_size();
+                    ui.allocate_ui_with_layout(body_size, Layout::top_down(Align::Min), |page_ui| {
+                        page_ui.set_min_width(body_size.x);
+                        page_ui.set_min_height(body_size.y);
+                        let transition = if self.config.enable_animations {
+                            (self.page_transition_started.elapsed().as_secs_f32() / 0.22).clamp(0.0, 1.0)
+                        } else { 1.0 };
+                        page_ui.set_opacity(transition);
+                        page_ui.add_space((1.0 - transition) * 10.0);
+                        match self.page {
+                            Page::Home => self.home_page(page_ui),
+                            Page::Minecraft => self.minecraft_page(page_ui),
+                            Page::Settings => self.settings_hub(page_ui),
+                        }
+                        if transition < 1.0 { ctx.request_repaint_after(Duration::from_millis(16)); }
+                    });
                 });
             });
         paint_resize_grip(ctx);
@@ -3011,26 +3344,26 @@ fn configure_style(ctx: &egui::Context, accent: Color32) {
     style.visuals = egui::Visuals::dark();
     style.visuals.panel_fill = BG;
     style.visuals.window_fill = PANEL;
-    style.visuals.extreme_bg_color = Color32::from_rgb(10, 14, 19);
+    style.visuals.extreme_bg_color = Color32::from_rgb(17, 17, 18);
     style.visuals.faint_bg_color = PANEL;
     style.visuals.selection.bg_fill = accent;
     style.visuals.widgets.noninteractive.bg_fill = PANEL;
     style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
     style.visuals.widgets.inactive.bg_fill = PANEL_LIGHT;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(43, 62, 54);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(60, 61, 63);
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::WHITE);
     style.visuals.widgets.active.bg_fill = accent;
     style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    style.visuals.widgets.noninteractive.rounding = Rounding::same(11.0);
-    style.visuals.widgets.inactive.rounding = Rounding::same(11.0);
-    style.visuals.widgets.hovered.rounding = Rounding::same(11.0);
-    style.visuals.widgets.active.rounding = Rounding::same(11.0);
-    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(42, 53, 62));
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(75, 112, 95));
+    style.visuals.widgets.noninteractive.rounding = Rounding::same(3.0);
+    style.visuals.widgets.inactive.rounding = Rounding::same(3.0);
+    style.visuals.widgets.hovered.rounding = Rounding::same(3.0);
+    style.visuals.widgets.active.rounding = Rounding::same(3.0);
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(70, 71, 73));
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(100, 104, 100));
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent);
-    style.visuals.window_rounding = Rounding::same(16.0);
-    style.visuals.menu_rounding = Rounding::same(10.0);
+    style.visuals.window_rounding = Rounding::same(4.0);
+    style.visuals.menu_rounding = Rounding::same(3.0);
     style.visuals.override_text_color = Some(TEXT);
     style.animation_time = 0.16;
     style.spacing.item_spacing = egui::vec2(11.0, 10.0);
