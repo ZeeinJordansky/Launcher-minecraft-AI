@@ -1568,7 +1568,7 @@ impl MintyApp {
                             .rounding(Rounding::same(14.0))
                             .inner_margin(egui::Margin::same(12.0))
                             .show(card_ui, |ui| {
-                                ui.set_min_height(172.0);
+                                ui.set_min_height(178.0);
                                 ui.horizontal(|ui| {
                                     let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
                                     ui.painter().rect_filled(rect, Rounding::same(11.0), PANEL_LIGHT);
@@ -1588,8 +1588,8 @@ impl MintyApp {
                                     });
                                 });
                                 ui.add_space(6.0);
-                                let description: String = project.description.chars().take(104).collect();
-                                ui.add_sized([ui.available_width(), 32.0],
+                                let description: String = project.description.chars().take(82).collect();
+                                ui.add_sized([ui.available_width(), 38.0],
                                     egui::Label::new(RichText::new(description).size(9.5).color(MUTED)).wrap());
                                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                                     ui.horizontal(|ui| {
@@ -1913,7 +1913,7 @@ impl MintyApp {
                             ui.label(RichText::new("UV-АТЛАС").size(9.0).strong().color(MUTED));
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 ui.checkbox(&mut self.skin_show_grid, "Сетка");
-                                ui.add(egui::Slider::new(&mut self.skin_zoom, 4.0..=9.0).show_value(false).text("Масштаб"));
+                                ui.add(egui::Slider::new(&mut self.skin_zoom, 3.0..=5.5).show_value(false).text("Масштаб"));
                             });
                         });
                         self.skin_canvas(ui);
