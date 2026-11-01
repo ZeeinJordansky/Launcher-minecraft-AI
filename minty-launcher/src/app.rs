@@ -215,7 +215,7 @@ impl MintyApp {
 
     fn open_manual_update(&self) {
         let url = self.update_info.as_ref()
-            .map(|info| info.asset_url.as_str())
+            .map(|info| info.release_url.as_str())
             .unwrap_or("https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases");
         let _ = open::that(url);
     }
@@ -1184,7 +1184,9 @@ impl MintyApp {
                             ui.label(RichText::new(format!("Minty выделит {} GB для игры.", self.hardware.recommended_memory_gb))
                                 .size(10.0).color(MINT));
                         } else {
-                            ui.add(egui::Slider::new(&mut self.config.max_memory_gb, 2..=16).suffix(" GB"));
+                            let manual_max = self.hardware.total_memory_gb.saturating_sub(2).min(16).max(2) as u8;
+                            self.config.max_memory_gb = self.config.max_memory_gb.clamp(2, manual_max);
+                            ui.add(egui::Slider::new(&mut self.config.max_memory_gb, 2..=manual_max).suffix(" GB"));
                         }
                         ui.add_space(8.0);
                         ui.checkbox(&mut self.config.auto_graphics_profile,

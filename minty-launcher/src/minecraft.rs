@@ -237,10 +237,11 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     variables.insert("launcher_version", env!("CARGO_PKG_VERSION"));
 
     let mut jvm_args = Vec::new();
+    let safe_manual_max = hardware.total_memory_gb.saturating_sub(2).min(16).max(2) as u8;
     let max_memory_gb = if config.auto_memory {
         hardware.recommended_memory_gb
     } else {
-        config.max_memory_gb.clamp(2, hardware.recommended_memory_gb.max(2))
+        config.max_memory_gb.clamp(2, safe_manual_max)
     };
     jvm_args.push(if low_end_profile { "-Xms512M".to_owned() } else { "-Xms1G".to_owned() });
     jvm_args.push(format!("-Xmx{max_memory_gb}G"));
