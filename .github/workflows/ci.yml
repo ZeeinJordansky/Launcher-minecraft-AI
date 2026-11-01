@@ -12,34 +12,59 @@ permissions:
 
 jobs:
   build:
-    name: Windows x64 tests and single-file build
+    name: Windows x64 tests and installer
     runs-on: windows-latest
     env:
       RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Run tests
+      - name: Run Rust tests
         working-directory: minty-launcher
         run: cargo test --all-targets --target x86_64-pc-windows-msvc
-      - name: Build one-file executable
+      - name: Build x64 application
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
-      - name: Verify PE architecture and embedded icon
+      - name: Verify application PE
         shell: bash
         run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
-      - name: Upload executable artifact
+      - name: Stage application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/minty-launcher.exe
+      - name: Install Pillow
+        run: python -m pip install --disable-pip-version-check Pillow
+      - name: Generate setup icon
+        run: python scripts/installer/build_icon.py
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          if (!(Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+      - name: Compile setup wizard
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=0.2.0" "scripts/installer/MintySetup.iss"
+          if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
+      - name: Verify installer and application
+        shell: pwsh
+        run: |
+          python scripts/verify_windows_exe.py dist/minty-launcher.exe
+          if ((Get-Item dist/MintyLauncher-Setup.exe).Length -lt 1000000) { throw "Setup is unexpectedly small." }
+          Get-FileHash dist/minty-launcher.exe -Algorithm SHA256
+          Get-FileHash dist/MintyLauncher-Setup.exe -Algorithm SHA256
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: minty-launcher-windows-x64
-          path: minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
+          name: minty-launcher-windows-x64-v0.2.0
+          path: |
+            dist/minty-launcher.exe
+            dist/MintyLauncher-Setup.exe
           if-no-files-found: error

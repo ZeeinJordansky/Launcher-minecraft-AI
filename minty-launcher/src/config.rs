@@ -13,6 +13,9 @@ use std::{
 pub struct AppConfig {
     pub game_dir: PathBuf,
     pub selected_version: String,
+    pub selected_loader: String,
+    pub selected_loader_version: String,
+    pub selected_profile_id: String,
     pub offline_username: String,
     pub microsoft_client_id: String,
     pub java_path: String,
@@ -29,6 +32,9 @@ impl Default for AppConfig {
         Self {
             game_dir,
             selected_version: "latest-release".to_owned(),
+            selected_loader: "Vanilla".to_owned(),
+            selected_loader_version: String::new(),
+            selected_profile_id: String::new(),
             offline_username: "Player".to_owned(),
             microsoft_client_id: String::new(),
             java_path: String::new(),

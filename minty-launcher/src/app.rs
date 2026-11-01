@@ -38,6 +38,8 @@ pub struct MintyApp {
     launch_rx: Option<Receiver<LaunchEvent>>,
     auth_busy: bool,
     launch_busy: bool,
+    install_busy: bool,
+    version_type_filter: String,
     status: String,
     error: Option<String>,
     device_code: Option<(String, String, String)>,
@@ -70,6 +72,8 @@ impl MintyApp {
             launch_rx: None,
             auth_busy: false,
             launch_busy: false,
+            install_busy: false,
+            version_type_filter: "Все".to_owned(),
             status: "Minty Launcher готов к работе".to_owned(),
             error: None,
             device_code: None,
@@ -149,8 +153,25 @@ impl MintyApp {
         });
     }
 
+    fn install_selected_version(&mut self, version_id: String) {
+        if self.install_busy || self.launch_busy { return; }
+        self.config.selected_version = version_id.clone();
+        self.config.selected_profile_id.clear();
+        if let Err(error) = config::save(&self.config) {
+            self.error = Some(format!("Не удалось сохранить выбранную версию: {error:#}"));
+            return;
+        }
+        let config = self.config.clone();
+        let (tx, rx) = unbounded();
+        self.launch_rx = Some(rx);
+        self.install_busy = true;
+        self.error = None;
+        self.log(format!("Устанавливаю {} для Minecraft {version_id}…", self.config.selected_loader));
+        thread::spawn(move || { let _ = minecraft::install_version(config, tx); });
+    }
+
     fn start_game(&mut self) {
-        if self.launch_busy {
+        if self.launch_busy || self.install_busy {
             return;
         }
         let selected_dir = PathBuf::from(self.directory_input.trim());
@@ -238,14 +259,22 @@ impl MintyApp {
         for event in launch_events {
             match event {
                 LaunchEvent::Status(message) => self.log(message),
+                LaunchEvent::Installed(profile_id) => {
+                    self.config.selected_profile_id = profile_id.clone();
+                    let _ = config::save(&self.config);
+                    self.install_busy = false;
+                    self.log(format!("Установка завершена: {profile_id}"));
+                }
                 LaunchEvent::Finished(message) => {
                     self.log(message);
                     self.launch_busy = false;
+                    self.install_busy = false;
                 }
                 LaunchEvent::Failed(message) => {
                     self.error = Some(message.clone());
                     self.log("Не удалось запустить Minecraft");
                     self.launch_busy = false;
+                    self.install_busy = false;
                 }
             }
         }
@@ -436,7 +465,7 @@ impl MintyApp {
                             ui.label(RichText::new("ТЕКУЩАЯ УСТАНОВКА").size(10.0).strong().color(MUTED));
                             ui.add_space(6.0);
                             ui.label(RichText::new(if self.config.selected_version == "latest-release" { "Последний релиз" } else { &self.config.selected_version }).size(24.0).strong().color(TEXT));
-                            ui.label(RichText::new("Minecraft · Java Edition · Vanilla").size(12.0).color(MUTED));
+                            ui.label(RichText::new(format!("Minecraft · Java Edition · {}", self.config.selected_loader)).size(12.0).color(MUTED));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(RichText::new("✦").size(58.0).color(MINT_DARK));
@@ -444,6 +473,18 @@ impl MintyApp {
                     });
                     ui.add_space(17.0);
                     ui.horizontal(|ui| {
+                        ui.label(RichText::new("Загрузчик").color(TEXT).size(12.0));
+                        egui::ComboBox::from_id_source("home_loader_picker")
+                            .selected_text(&self.config.selected_loader).width(145.0)
+                            .show_ui(ui, |ui| {
+                                for loader in ["Vanilla", "Forge", "NeoForge", "Fabric", "Quilt"] {
+                                    if ui.selectable_value(&mut self.config.selected_loader, loader.to_owned(), loader).changed() {
+                                        self.config.selected_profile_id.clear();
+                                        self.config.selected_loader_version.clear();
+                                        let _ = config::save(&self.config);
+                                    }
+                                }
+                            });
                         ui.label(RichText::new("Версия игры").color(TEXT).size(12.0));
                         egui::ComboBox::from_id_source("version_picker")
                             .selected_text(if self.config.selected_version.is_empty() { "Загрузка…" } else { &self.config.selected_version })
@@ -531,45 +572,99 @@ impl MintyApp {
     fn installations_page(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.label(RichText::new("Установки").size(27.0).strong().color(TEXT));
-        ui.label(RichText::new("Официальные Vanilla-релизы Minecraft Java Edition.").size(13.0).color(MUTED));
+        ui.label(RichText::new("Выбери версию Minecraft и загрузчик, затем установи профиль.").size(13.0).color(MUTED));
         ui.add_space(19.0);
-        egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0)).inner_margin(egui::Margin::same(18.0)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Поиск версии").color(TEXT));
-                ui.add(egui::TextEdit::singleline(&mut self.version_search).desired_width(240.0).hint_text("Например, 1.21.4"));
-            });
-            ui.add_space(12.0);
-            let filtered_versions: Vec<VersionInfo> = self.versions.iter()
-                .filter(|v| self.version_search.is_empty() || v.id.contains(&self.version_search))
-                .cloned()
-                .collect();
-            egui::ScrollArea::vertical().max_height(390.0).show(ui, |ui| {
-                for version in filtered_versions {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&version.id).strong().color(TEXT));
-                        ui.label(RichText::new("RELEASE").size(9.0).strong().color(MINT));
-                        if let Some(date) = &version.time {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let mut requested_install: Option<String> = None;
+        egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+            .inner_margin(egui::Margin::same(18.0)).show(ui, |ui| {
+                let mut settings_changed = false;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Загрузчик").color(TEXT));
+                    egui::ComboBox::from_id_source("install_loader_picker")
+                        .selected_text(&self.config.selected_loader).width(140.0)
+                        .show_ui(ui, |ui| {
+                            for loader in ["Vanilla", "Forge", "NeoForge", "Fabric", "Quilt"] {
+                                if ui.selectable_value(&mut self.config.selected_loader, loader.to_owned(), loader).changed() {
+                                    self.config.selected_profile_id.clear();
+                                    self.config.selected_loader_version.clear();
+                                    settings_changed = true;
+                                }
+                            }
+                        });
+                    ui.label(RichText::new("Сборка").color(TEXT));
+                    if ui.add(egui::TextEdit::singleline(&mut self.config.selected_loader_version)
+                        .desired_width(130.0).hint_text("Последняя стабильная")).changed() {
+                        self.config.selected_profile_id.clear();
+                        settings_changed = true;
+                    }
+                });
+                ui.label(RichText::new("Оставь сборку пустой — будет выбрана последняя совместимая стабильная версия.").size(10.0).color(MUTED));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Поиск").color(TEXT));
+                    ui.add(egui::TextEdit::singleline(&mut self.version_search)
+                        .desired_width(220.0).hint_text("Например, 1.21.4 или 24w14a"));
+                    ui.label(RichText::new("Тип").color(TEXT));
+                    egui::ComboBox::from_id_source("version_type_filter")
+                        .selected_text(&self.version_type_filter).width(120.0)
+                        .show_ui(ui, |ui| {
+                            for kind in ["Все", "Release", "Snapshot", "Old Alpha", "Old Beta"] {
+                                ui.selectable_value(&mut self.version_type_filter, kind.to_owned(), kind);
+                            }
+                        });
+                    if ui.button("↻").on_hover_text("Обновить весь список версий").clicked() {
+                        self.load_versions();
+                    }
+                });
+                if settings_changed { let _ = config::save(&self.config); }
+                ui.add_space(12.0);
+                let filtered: Vec<VersionInfo> = self.versions.iter()
+                    .filter(|v| {
+                        let query = self.version_search.is_empty()
+                            || v.id.to_ascii_lowercase().contains(&self.version_search.to_ascii_lowercase());
+                        let kind = match self.version_type_filter.as_str() {
+                            "Release" => v.kind == "release",
+                            "Snapshot" => v.kind == "snapshot",
+                            "Old Alpha" => v.kind == "old_alpha",
+                            "Old Beta" => v.kind == "old_beta",
+                            _ => true,
+                        };
+                        query && kind
+                    }).cloned().collect();
+                ui.label(RichText::new(format!("Найдено версий: {}", filtered.len())).size(10.0).color(MUTED));
+                egui::ScrollArea::vertical().max_height(370.0).auto_shrink([false, false]).show(ui, |ui| {
+                    for version in filtered {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&version.id).strong().color(TEXT).size(12.0));
+                            let kind = match version.kind.as_str() {
+                                "release" => "RELEASE", "snapshot" => "SNAPSHOT",
+                                "old_alpha" => "ALPHA", "old_beta" => "BETA", _ => "VERSION",
+                            };
+                            ui.label(RichText::new(kind).size(9.0).strong().color(MINT));
+                            if let Some(date) = &version.time {
                                 ui.label(RichText::new(date.get(..10).unwrap_or(date)).size(10.0).color(MUTED));
+                            }
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let button = if self.install_busy && self.config.selected_version == version.id {
+                                    "Установка…"
+                                } else if self.config.selected_version == version.id { "Установить снова" } else { "Скачать" };
+                                if ui.add_enabled(!self.install_busy && !self.launch_busy, egui::Button::new(button)).clicked() {
+                                    requested_install = Some(version.id.clone());
+                                }
                             });
-                        }
-                        if ui.small_button(if self.config.selected_version == version.id { "Выбрана" } else { "Выбрать" }).clicked() {
-                            self.config.selected_version = version.id.clone();
-                            let _ = config::save(&self.config);
-                            self.log(format!("Выбрана Minecraft {}", version.id));
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.separator();
+                        });
+                        ui.add_space(5.0);
+                        ui.separator();
+                    }
+                });
+                if self.versions.is_empty() {
+                    ui.label(RichText::new("Список версий пока не загружен. Проверь интернет и обнови список.").color(MUTED));
                 }
             });
-            if self.versions.is_empty() {
-                ui.label(RichText::new("Список пока не загружен. Проверь интернет и обнови список версий.").color(MUTED));
-            }
-        });
-        ui.add_space(13.0);
+        if let Some(version_id) = requested_install { self.install_selected_version(version_id); }
+        ui.add_space(12.0);
         ui.label(RichText::new(format!("Папка игры: {}", self.config.game_dir.display())).size(10.0).color(MUTED));
-        ui.label(RichText::new("Fabric, Forge, NeoForge и импорт модпаков пока не поддерживаются.").size(10.0).color(MUTED));
+        ui.label(RichText::new("Загрузчики устанавливаются только для совместимых версий Minecraft.").size(10.0).color(MUTED));
     }
 
     fn skin_page(&mut self, ui: &mut egui::Ui) {
@@ -790,7 +885,7 @@ impl eframe::App for MintyApp {
                     Page::Settings => self.settings_page(ui),
                 }
             });
-        if self.auth_busy || self.launch_busy || self.version_rx.is_some() {
+        if self.auth_busy || self.launch_busy || self.install_busy || self.version_rx.is_some() {
             let interval = if self.config.weak_pc_mode { 500 } else { 150 };
             ctx.request_repaint_after(Duration::from_millis(interval));
         }

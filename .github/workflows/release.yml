@@ -3,58 +3,68 @@ name: Minty Launcher - Windows Release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Test, build and publish minty-launcher.exe
+  build:
+    name: Windows x64 tests and installer
     runs-on: windows-latest
     env:
       RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Run tests before publishing
+      - name: Run Rust tests
         working-directory: minty-launcher
         run: cargo test --all-targets --target x86_64-pc-windows-msvc
-      - name: Build self-contained Windows executable
+      - name: Build x64 application
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
-      - name: Verify PE architecture and embedded icon
+      - name: Verify application PE
         shell: bash
         run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
-      - name: Stage exactly one application file
-        shell: bash
+      - name: Stage application
+        shell: pwsh
         run: |
-          mkdir -p dist
-          built="minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe"
-          test -s "$built"
-          cp "$built" dist/minty-launcher.exe
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/minty-launcher.exe
+      - name: Install Pillow
+        run: python -m pip install --disable-pip-version-check Pillow
+      - name: Generate setup icon
+        run: python scripts/installer/build_icon.py
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          if (!(Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+      - name: Compile setup wizard
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=0.2.0" "scripts/installer/MintySetup.iss"
+          if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
+      - name: Verify installer and application
+        shell: pwsh
+        run: |
           python scripts/verify_windows_exe.py dist/minty-launcher.exe
-      - name: Publish executable-only GitHub Release
-        uses: softprops/action-gh-release@v2
+          if ((Get-Item dist/MintyLauncher-Setup.exe).Length -lt 1000000) { throw "Setup is unexpectedly small." }
+          Get-FileHash dist/minty-launcher.exe -Algorithm SHA256
+          Get-FileHash dist/MintyLauncher-Setup.exe -Algorithm SHA256
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v0.1.6
-          name: Minty Launcher v0.1.6
-          body: |
-            Minty Launcher for Windows 10/11 x64.
-
-            Download the single minty-launcher.exe asset and run it with a double-click. The Minty icon is embedded into the Windows executable itself; no sidecar icon file, terminal commands, Rust toolchain or separately installed Java are required from the user.
-
-            A compatible Java Runtime is downloaded automatically when Minecraft is launched.
-          generate_release_notes: true
-          files: dist/minty-launcher.exe
-          fail_on_unmatched_files: true
-          make_latest: true
+          name: minty-launcher-windows-x64-v0.2.0
+          path: |
+            dist/minty-launcher.exe
+            dist/MintyLauncher-Setup.exe
+          if-no-files-found: error

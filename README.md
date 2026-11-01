@@ -2,9 +2,9 @@
 
 ![Minty Launcher icon](minty-launcher/assets/minty-launcher-icon.png)
 
-**Скачать для Windows:** [minty-launcher.exe — последняя версия GitHub Releases](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/minty-launcher.exe)
+**Скачать для Windows:** [MintyLauncher-Setup.exe — мастер установки](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/MintyLauncher-Setup.exe)
 
-Скачай один файл minty-launcher.exe и запусти двойным щелчком. Терминал, Rust, JDK и отдельная установка Java пользователю не нужны. Совместимая Java Runtime автоматически загружается лаунчером при первом запуске выбранной версии Minecraft. Интернет нужен для загрузки Minecraft и Java.
+Запусти мастер установки: выбери язык, прими лицензию, укажи папку, отметь нужные ярлыки и нажми «Установить». Переносимая сборка minty-launcher.exe также публикуется отдельно. Терминал, Rust, JDK и отдельная установка Java пользователю не нужны. Совместимая Java Runtime автоматически загружается лаунчером при первом запуске выбранной версии Minecraft. Интернет нужен для загрузки Minecraft и Java.
 
 Иконка Minty встроена в Windows PE-ресурсы EXE и используется окном приложения. Рядом не нужен отдельный ICO или папка ресурсов.
 
@@ -16,7 +16,7 @@ GitHub автоматически добавляет ссылки Source code (z
 
 ## Возможности
 
-- Установка и запуск официальных Vanilla-релизов Minecraft Java Edition.
+- Полный каталог версий Mojang: release, snapshot, old_alpha и old_beta; поиск, фильтры и установка.\n- Установка Vanilla, Forge, NeoForge, Fabric и Quilt для совместимых версий Minecraft.
 - Загрузка client JAR, библиотек, native-библиотек и ресурсов с проверкой SHA-1 Mojang.
 - Автоматическая установка подходящей Java Runtime.
 - Вход Microsoft Device Code с проверкой Xbox/XSTS/профиля Minecraft. Для онлайн-входа требуется Microsoft OAuth Client ID в настройках.
@@ -31,7 +31,7 @@ GitHub автоматически добавляет ссылки Source code (z
 
 Skin Studio редактирует и экспортирует PNG. Чистый Vanilla Minecraft не применяет локальную PNG-текстуру к офлайн-профилю автоматически; для отображения скина в игре нужен совместимый мод загрузки локальных скинов.
 
-Режим Слабый ПК применяет более лёгкие параметры, но конкретный прирост FPS не гарантируется — он зависит от железа, драйверов, версии игры и мира. Сейчас поддерживается Vanilla; Fabric, Forge и NeoForge не подключены. SHA-1 проверка защищает целостность официальных загрузок и не является античитом.
+Режим Слабый ПК применяет более лёгкие параметры, но конкретный прирост FPS не гарантируется — он зависит от железа, драйверов, версии игры и мира. Совместимость модлоадеров зависит от наличия официальной версии установщика для выбранного Minecraft. SHA-1 проверка защищает целостность официальных загрузок и не является античитом.
 
 ## Сборка
 
