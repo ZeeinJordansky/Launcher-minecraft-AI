@@ -6,7 +6,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use sha1::{Digest, Sha1};
-use std::{collections::HashMap, fs, io::{Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{atomic::{AtomicUsize, Ordering}, Arc}, time::Duration};
+use std::{collections::HashMap, fs, io::{Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc}, time::Duration};
 use zip::ZipArchive;
 
 const VERSION_MANIFEST: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -38,6 +38,7 @@ pub enum LaunchEvent {
     Status(String),
     Installed(String),
     Finished(String),
+    Cancelled,
     Failed(String),
 }
 
@@ -63,7 +64,8 @@ pub fn install_version(config: AppConfig, events: Sender<LaunchEvent>) -> Result
         name: if config.offline_username.trim().is_empty() { "Player".to_owned() } else { config.offline_username.clone() },
         uuid: String::new(), xuid: String::new(), access_token: String::new(),
     };
-    match launch_inner(&config, &account, &events, false) {
+    let cancel = AtomicBool::new(false);
+    match launch_inner(&config, &account, &events, false, &cancel) {
         Ok((_code, profile_id)) => {
             events.send(LaunchEvent::Installed(profile_id)).ok();
             Ok(())
@@ -75,15 +77,23 @@ pub fn install_version(config: AppConfig, events: Sender<LaunchEvent>) -> Result
     }
 }
 
-pub fn launch(config: AppConfig, account: Account, events: Sender<LaunchEvent>) -> Result<()> {
-    let result = launch_inner(&config, &account, &events, true);
+pub fn launch(config: AppConfig, account: Account, events: Sender<LaunchEvent>, cancel: Arc<AtomicBool>) -> Result<()> {
+    let result = launch_inner(&config, &account, &events, true, &cancel);
     match result {
-        Ok((code, _profile_id)) => { events.send(LaunchEvent::Finished(format!("Minecraft завершил работу (код {code})."))).ok(); Ok(()) }
+        Ok((_code, _profile_id)) => {
+            events.send(LaunchEvent::Finished("Minecraft запущен. Лаунчер можно оставить открытым.".to_owned())).ok();
+            Ok(())
+        }
+        Err(error) if cancel.load(Ordering::Relaxed) => {
+            events.send(LaunchEvent::Cancelled).ok();
+            Ok(())
+        }
         Err(error) => { events.send(LaunchEvent::Failed(format!("{error:#}"))).ok(); Err(error) }
     }
 }
 
-fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEvent>, launch_game: bool) -> Result<(i32, String)> {
+fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEvent>, launch_game: bool, cancel: &AtomicBool) -> Result<(i32, String)> {
+    check_cancelled(cancel)?;
     let client = http_client()?;
     let version = if config.selected_version == "latest-release" {
         status(events, "Проверяю список версий…");
@@ -91,6 +101,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     } else { config.selected_version.clone() };
     validate_version_id(&version)?;
 
+    check_cancelled(cancel)?;
     let hardware = system_info::detect();
     let low_end_profile = config.weak_pc_mode || (config.auto_graphics_profile && hardware.low_end);
     let game_dir = config.game_dir.clone();
@@ -101,6 +112,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     apply_weak_pc_profile(&game_dir, low_end_profile)?;
     for dir in [&versions_dir, &libraries_dir, &assets_dir] { fs::create_dir_all(dir)?; }
 
+    check_cancelled(cancel)?;
     status(events, &format!("Получаю метаданные Minecraft {version}…"));
     let manifest: VersionManifest = client.get(VERSION_MANIFEST).send()?.error_for_status()?.json()?;
     let version_info = manifest.versions.iter().find(|v| v.id == version)
@@ -108,7 +120,9 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     let metadata_path = versions_dir.join(format!("{version}.json"));
     download_verified(&client, &version_info.url, &metadata_path, version_info.sha1.as_deref())?;
     let base_metadata: Value = serde_json::from_slice(&fs::read(&metadata_path)?)?;
+    check_cancelled(cancel)?;
     let profile_id = ensure_loader_profile(config, &client, &version, &game_dir, events)?;
+    check_cancelled(cancel)?;
     let metadata = if profile_id == version {
         base_metadata.clone()
     } else {
@@ -133,6 +147,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     let mut native_archives: Vec<PathBuf> = Vec::new();
     if let Some(libraries) = metadata["libraries"].as_array() {
         for library in libraries {
+            check_cancelled(cancel)?;
             if !library_allowed(library) { continue; }
             if let Some((path, url, sha1)) = resolve_library_artifact(library, &libraries_dir)? {
                 download_verified(&client, &url, &path, sha1.as_deref())?;
@@ -150,7 +165,11 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     status(events, "Распаковываю системные библиотеки Minecraft…");
     if natives_dir.exists() { fs::remove_dir_all(&natives_dir)?; }
     fs::create_dir_all(&natives_dir)?;
-    for archive in native_archives { extract_natives(&archive, &natives_dir)?; }
+    check_cancelled(cancel)?;
+    for archive in native_archives {
+        check_cancelled(cancel)?;
+        extract_natives(&archive, &natives_dir)?;
+    }
 
     let asset_index_id = metadata["assetIndex"]["id"].as_str()
         .or_else(|| metadata["assets"].as_str()).unwrap_or("legacy").to_owned();
@@ -172,15 +191,18 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     status(events, &format!("Проверяю ресурсы Minecraft ({total_assets} файлов)…"));
     let asset_root = assets_dir.join("objects");
     let errors: Vec<String> = asset_entries.par_iter().filter_map(|(hash, url)| {
+        if cancel.load(Ordering::Relaxed) { return None; }
         let path = asset_root.join(&hash[..2]).join(hash);
         let result = download_verified(&client, url, &path, Some(hash));
         completed.fetch_add(1, Ordering::Relaxed);
         result.err().map(|e| format!("{hash}: {e}"))
     }).collect();
+        if cancel.load(Ordering::Relaxed) { check_cancelled(cancel)?; }
         if !errors.is_empty() {
             bail!("Не удалось загрузить {} ресурсов. Первый сбой: {}", errors.len(), errors[0]);
         }
     }
+    check_cancelled(cancel)?;
 
     // Old Alpha/Beta versions may have no modern asset index or log config.
     let log_config_path = if let Some(file) = metadata["logging"]["client"]["file"].as_object() {
@@ -198,6 +220,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
         return Ok((0, profile_id));
     }
 
+    check_cancelled(cancel)?;
     let java_major = metadata["javaVersion"]["majorVersion"].as_u64().unwrap_or(8) as u32;
     status(events, &format!("Проверяю Java {java_major}…"));
     let runtime_root = crate::config::data_dir()?.join("runtimes");
@@ -280,11 +303,12 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     let log_file = fs::OpenOptions::new().create(true).append(true).open(&log_path)
         .with_context(|| format!("Не удалось открыть журнал игры: {}", log_path.display()))?;
     let stdout = log_file.try_clone()?;
+    check_cancelled(cancel)?;
     let mut command = Command::new(&java);
     command.args(&jvm_args).arg(main_class).args(&game_args)
         .current_dir(&game_dir).stdin(Stdio::null())
         .stdout(Stdio::from(stdout)).stderr(Stdio::from(log_file));
-    let game_status = command.status().with_context(|| {
+    let child = command.spawn().with_context(|| {
         let os_code = std::io::Error::last_os_error().raw_os_error();
         if os_code == Some(5) {
             format!(
@@ -295,10 +319,9 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
             format!("Не удалось запустить Minecraft через {} (Win32 error {:?})", java.display(), os_code)
         }
     })?;
-    if !game_status.success() {
-        status(events, &format!("Minecraft завершился с кодом {:?}. Журнал: {}", game_status.code(), log_path.display()));
-    }
-    Ok((game_status.code().unwrap_or(-1), profile_id))
+    status(events, &format!("Minecraft запущен (PID {}). Журнал: {}", child.id(), log_path.display()));
+    drop(child);
+    Ok((0, profile_id))
 }
 
 /// Applies conservative in-game graphics settings and keeps a one-time backup of options.txt.
@@ -371,6 +394,13 @@ fn apply_weak_pc_profile(game_dir: &Path, enabled: bool) -> Result<()> {
         fs::remove_file(&options)?;
     }
     fs::rename(temp, options)?;
+    Ok(())
+}
+
+fn check_cancelled(cancel: &AtomicBool) -> Result<()> {
+    if cancel.load(Ordering::Relaxed) {
+        anyhow::bail!("Запуск Minecraft отменён пользователем.");
+    }
     Ok(())
 }
 
