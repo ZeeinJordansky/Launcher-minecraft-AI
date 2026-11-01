@@ -53,9 +53,11 @@ enum MinecraftTab {
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum SettingsTab {
-    General,
-    Journal,
+    General, Game, Java, Performance, Appearance, Account, Storage, Security, Updates, Journal,
 }
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum SkinTool { Brush, Eraser, Fill, Eyedropper }
 
 struct AvatarImage {
     width: usize,
@@ -82,6 +84,8 @@ pub struct MintyApp {
     launch_cancel: Option<Arc<AtomicBool>>,
     mods: Vec<ModProject>,
     mod_search: String,
+    mod_category: String,
+    mod_sort: String,
     mod_status: String,
     mod_searching: bool,
     mod_installing: bool,
@@ -108,6 +112,13 @@ pub struct MintyApp {
     skin_color: Color32,
     skin_texture: Option<egui::TextureHandle>,
     skin_status: String,
+    skin_tool: SkinTool,
+    skin_zoom: f32,
+    skin_brush_size: u8,
+    skin_mirror: bool,
+    skin_region: String,
+    skin_history_undo: Vec<Vec<u8>>,
+    skin_history_redo: Vec<Vec<u8>>,
     boot_stage: BootStage,
     boot_stage_started: Instant,
     boot_java_rx: Option<Receiver<Option<String>>>,
@@ -157,7 +168,9 @@ impl MintyApp {
             launch_cancel: None,
             mods: Vec::new(),
             mod_search: String::new(),
-            mod_status: "Ищи моды через Modrinth или импортируй собственные файлы.".to_owned(),
+            mod_category: "mod".to_owned(),
+            mod_sort: "downloads".to_owned(),
+            mod_status: "Каталог Modrinth: моды, сборки, ресурспаки и шейдеры.".to_owned(),
             mod_searching: false,
             mod_installing: false,
             mod_search_rx: None,
@@ -182,7 +195,14 @@ impl MintyApp {
             skin_pixels: skin::blank(),
             skin_color: Color32::from_rgb(110, 190, 145),
             skin_texture: None,
-            skin_status: "Импортируй PNG-скин или начни рисовать на пустом холсте".to_owned(),
+            skin_status: "Импортируй PNG-скин или создай текстуру с нуля".to_owned(),
+            skin_tool: SkinTool::Brush,
+            skin_zoom: 7.0,
+            skin_brush_size: 1,
+            skin_mirror: false,
+            skin_region: "Вся текстура".to_owned(),
+            skin_history_undo: Vec::new(),
+            skin_history_redo: Vec::new(),
             boot_stage: BootStage::CheckingUpdates,
             boot_stage_started: Instant::now(),
             boot_java_rx: None,
@@ -412,6 +432,8 @@ impl MintyApp {
         let query = self.mod_search.trim().to_owned();
         let game_version = self.config.selected_version.clone();
         let loader = self.config.selected_loader.clone();
+        let category = self.mod_category.clone();
+        let sort = self.mod_sort.clone();
         let (tx, rx) = unbounded();
         self.mod_search_rx = Some(rx);
         self.mod_searching = true;
@@ -422,13 +444,18 @@ impl MintyApp {
         };
         let ctx = self.ctx.clone();
         thread::spawn(move || {
-            tx.send(mods::search(&query, &game_version, &loader).map_err(|error| format!("{error:#}"))).ok();
+            tx.send(mods::search(&query, &game_version, &loader, &category, &sort).map_err(|error| format!("{error:#}"))).ok();
             ctx.request_repaint();
         });
     }
 
     fn install_store_mod(&mut self, slug: String) {
         if self.mod_installing { return; }
+        if self.mod_category != "mod" {
+            self.mod_status = "Для этого типа проекта открой его страницу: модпаки, ресурспаки и шейдеры требуют разных форматов импорта.".to_owned();
+            let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, slug));
+            return;
+        }
         if self.config.selected_loader == "Vanilla" {
             self.mod_status = "Для модов сначала выбери Fabric, Forge, NeoForge или Quilt.".to_owned();
             return;
@@ -787,6 +814,7 @@ impl MintyApp {
         {
             match skin::load_png(&path) {
                 Ok(pixels) => {
+                    self.push_skin_undo();
                     self.skin_pixels = pixels;
                     self.skin_texture = None;
                     self.skin_status = format!("Загружен: {}", path.display());
@@ -818,6 +846,60 @@ impl MintyApp {
                 Err(error) => self.skin_status = format!("Ошибка сохранения: {error:#}"),
             }
         }
+    }
+
+    fn push_skin_undo(&mut self) {
+        if self.skin_history_undo.len() >= 40 { self.skin_history_undo.remove(0); }
+        self.skin_history_undo.push(self.skin_pixels.clone());
+        self.skin_history_redo.clear();
+    }
+
+    fn undo_skin(&mut self) {
+        if let Some(previous)=self.skin_history_undo.pop() {
+            self.skin_history_redo.push(self.skin_pixels.clone());
+            self.skin_pixels=previous; self.skin_texture=None;
+            self.skin_status="Действие отменено".to_owned();
+        }
+    }
+
+    fn redo_skin(&mut self) {
+        if let Some(next)=self.skin_history_redo.pop() {
+            self.skin_history_undo.push(self.skin_pixels.clone());
+            self.skin_pixels=next; self.skin_texture=None;
+            self.skin_status="Действие повторено".to_owned();
+        }
+    }
+
+    fn paint_skin_pixel(&mut self,x:usize,y:usize,color:Color32) {
+        let radius=(self.skin_brush_size.saturating_sub(1)/2) as isize;
+        let mut centres=vec![(x,y)];
+        if self.skin_mirror { centres.push((63-x,y)); }
+        for (cx,cy) in centres {
+            for dy in -radius..=radius { for dx in -radius..=radius {
+                let px=cx as isize+dx; let py=cy as isize+dy;
+                if !(0..64).contains(&px)||!(0..64).contains(&py) { continue; }
+                let o=(py as usize*64+px as usize)*4;
+                self.skin_pixels[o..o+4].copy_from_slice(&color.to_array());
+            }}
+        }
+        self.skin_texture=None; self.skin_status=format!("Изменён пиксель: {x}, {y}");
+    }
+
+    fn fill_skin_area(&mut self,x:usize,y:usize,color:Color32) {
+        let start=(y*64+x)*4;
+        let target=[self.skin_pixels[start],self.skin_pixels[start+1],self.skin_pixels[start+2],self.skin_pixels[start+3]];
+        if target==color.to_array(){return;}
+        let mut stack=vec![(x,y)]; let mut visited=vec![false;4096];
+        while let Some((px,py))=stack.pop(){
+            let index=py*64+px;
+            if visited[index]{continue;} visited[index]=true;
+            let o=index*4;
+            if self.skin_pixels[o..o+4]!=target{continue;}
+            self.skin_pixels[o..o+4].copy_from_slice(&color.to_array());
+            if px>0{stack.push((px-1,py));} if px<63{stack.push((px+1,py));}
+            if py>0{stack.push((px,py-1));} if py<63{stack.push((px,py+1));}
+        }
+        self.skin_texture=None; self.skin_status="Заливка области завершена".to_owned();
     }
 
     fn accent_color(&self) -> Color32 {
@@ -1531,99 +1613,156 @@ impl MintyApp {
         ui.label(RichText::new(format!("Папка Java Edition: {}", self.config.game_dir.display())).size(10.0).color(MUTED));
     }
 
-    fn skin_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(7.0);
-        ui.label(RichText::new("Skin Studio").size(27.0).strong().color(TEXT));
-        ui.label(RichText::new("Редактируй текстуру своего персонажа даже без входа в Microsoft.").size(13.0).color(MUTED));
-        ui.add_space(15.0);
-        ui.horizontal(|ui| {
-            if ui.button("Импорт PNG").clicked() { self.import_skin(); }
-            if ui.button("Экспорт PNG").clicked() { self.export_skin(); }
-            if ui.button("Очистить холст").clicked() {
-                self.skin_pixels = skin::blank();
-                self.skin_texture = None;
-                self.skin_status = "Создан пустой холст 64×64".to_owned();
-            }
-        });
-        ui.add_space(10.0);
-        ui.columns(2, |columns| {
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0)).inner_margin(egui::Margin::same(14.0)).show(&mut columns[0], |ui| {
-                ui.label(RichText::new("ТЕКСТУРА 64 × 64").size(10.0).strong().color(MUTED));
-                ui.add_space(8.0);
-                self.skin_canvas(ui);
-            });
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0)).inner_margin(egui::Margin::same(16.0)).show(&mut columns[1], |ui| {
-                ui.label(RichText::new("ИНСТРУМЕНТЫ").size(10.0).strong().color(MUTED));
-                ui.add_space(8.0);
-                ui.label(RichText::new("Цвет кисти").color(TEXT));
-                ui.color_edit_button_srgba(&mut self.skin_color);
-                ui.add_space(8.0);
-                ui.label(RichText::new("Быстрая палитра").size(11.0).color(MUTED));
-                ui.horizontal(|ui| {
-                    for color in [
-                        Color32::from_rgb(35, 35, 42),
-                        Color32::from_rgb(235, 190, 145),
-                        Color32::from_rgb(75, 125, 200),
-                        Color32::from_rgb(180, 65, 75),
-                        Color32::from_rgb(85, 165, 105),
-                        Color32::from_rgb(240, 210, 90),
-                    ] {
-                        if ui.add_sized([25.0, 25.0], egui::Button::new(" ").fill(color)).clicked() {
-                            self.skin_color = color;
-                        }
-                    }
+    fn skin_page(&mut self,ui:&mut egui::Ui){
+        egui::ScrollArea::vertical().auto_shrink([false,false]).show(ui,|ui|{
+            ui.add_space(7.0);
+            ui.horizontal(|ui|{
+                ui.vertical(|ui|{
+                    ui.label(RichText::new("SKIN WORKSHOP").size(9.0).strong().color(self.accent_color()));
+                    ui.label(RichText::new("Редактор скинов").size(27.0).strong().color(TEXT));
+                    ui.label(RichText::new("Полная UV-текстура Minecraft 64×64").size(12.0).color(MUTED));
                 });
-                if ui.small_button("Ластик — прозрачный пиксель").clicked() {
-                    self.skin_color = Color32::TRANSPARENT;
-                }
-                ui.add_space(12.0);
-                ui.label(RichText::new("Как рисовать").strong().color(TEXT));
-                ui.label(RichText::new("Зажми левую кнопку мыши на текстуре. Каждый пиксель — отдельная точка скина.").size(11.0).color(MUTED));
-                ui.add_space(12.0);
-                ui.label(RichText::new(&self.skin_status).size(10.0).color(MINT));
-                ui.add_space(14.0);
-                ui.label(RichText::new("Офлайн-совместимость").strong().color(TEXT));
-                ui.label(RichText::new("Редактор работает локально и не требует аккаунта. PNG можно сохранить и использовать в моде загрузки скинов. Чистый Vanilla Minecraft не применяет локальные PNG-скины к офлайн-профилю автоматически.").size(10.0).color(MUTED));
+                ui.with_layout(Layout::right_to_left(Align::Center),|ui|{
+                    if ui.button("Экспорт PNG").clicked(){self.export_skin();}
+                    if ui.button("Импорт PNG").clicked(){self.import_skin();}
+                    if ui.add_enabled(!self.skin_history_undo.is_empty(),egui::Button::new("↶ Отменить")).clicked(){self.undo_skin();}
+                    if ui.add_enabled(!self.skin_history_redo.is_empty(),egui::Button::new("↷ Повторить")).clicked(){self.redo_skin();}
+                });
             });
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui|{
+                for label in ["Вся текстура","Голова","Тело","Руки","Ноги"]{
+                    let selected=self.skin_region==label;
+                    if ui.add(egui::Button::new(RichText::new(label).strong().color(if selected{TEXT}else{MUTED}))
+                        .fill(if selected{PANEL_LIGHT}else{PANEL}).rounding(Rounding::same(8.0))).clicked(){self.skin_region=label.to_owned();}
+                }
+            });
+            ui.add_space(10.0);
+            ui.columns(2,|columns|{
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0)).inner_margin(egui::Margin::same(12.0))
+                    .show(&mut columns[0],|ui|{
+                        ui.horizontal(|ui|{
+                            ui.label(RichText::new("UV-АТЛАС").size(9.0).strong().color(MUTED));
+                            ui.add(egui::Slider::new(&mut self.skin_zoom,4.0..=9.0).show_value(false));
+                        });
+                        self.skin_canvas(ui);
+                        ui.label(RichText::new("Шахматный фон показывает прозрачность; толстые линии отмечают блоки 8×8.")
+                            .size(9.0).color(MUTED));
+                    });
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0)).inner_margin(egui::Margin::same(13.0))
+                    .show(&mut columns[1],|ui|{
+                        ui.label(RichText::new("ИНСТРУМЕНТЫ").size(9.0).strong().color(MUTED));
+                        ui.horizontal_wrapped(|ui|{
+                            for (name,tool) in [("✎ Кисть",SkinTool::Brush),("◩ Ластик",SkinTool::Eraser),("▨ Заливка",SkinTool::Fill),("⌖ Пипетка",SkinTool::Eyedropper)]{
+                                let selected=self.skin_tool==tool;
+                                if ui.add(egui::Button::new(RichText::new(name).strong().color(if selected{TEXT}else{MUTED}))
+                                    .fill(if selected{PANEL_LIGHT}else{BG}).rounding(Rounding::same(8.0))).clicked(){self.skin_tool=tool;}
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Цвет").size(10.0).color(MUTED));
+                        ui.horizontal(|ui|{
+                            ui.color_edit_button_srgba(&mut self.skin_color);
+                            ui.label(RichText::new(format!("#{:02X}{:02X}{:02X}",self.skin_color.r(),self.skin_color.g(),self.skin_color.b())).monospace().size(9.0).color(TEXT));
+                        });
+                        ui.label(RichText::new("Размер кисти").size(10.0).color(MUTED));
+                        ui.add(egui::Slider::new(&mut self.skin_brush_size,1..=8).suffix(" px"));
+                        ui.checkbox(&mut self.skin_mirror,"Зеркальное рисование");
+                        ui.add_space(7.0);
+                        ui.label(RichText::new("ПАЛИТРА").size(9.0).strong().color(MUTED));
+                        ui.horizontal_wrapped(|ui|{
+                            for color in [Color32::from_rgb(35,35,42),Color32::from_rgb(235,190,145),Color32::from_rgb(75,125,200),
+                                Color32::from_rgb(180,65,75),Color32::from_rgb(85,165,105),Color32::from_rgb(240,210,90),
+                                Color32::WHITE,Color32::BLACK,Color32::TRANSPARENT]{
+                                if ui.add_sized([24.0,24.0],egui::Button::new(" ").fill(color)).clicked(){self.skin_color=color;}
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.label(RichText::new("ПРЕДПРОСМОТР ТЕКСТУРЫ").size(9.0).strong().color(MUTED));
+                        self.skin_preview(ui);
+                        ui.label(RichText::new(&self.skin_status).size(10.0).color(self.accent_color()));
+                        if ui.button("Очистить выбранную область").clicked(){
+                            self.push_skin_undo();
+                            for (x,y,w,h) in skin_region_rects(&self.skin_region){
+                                for py in y..(y+h).min(64){for px in x..(x+w).min(64){
+                                    let o=(py*64+px)*4; self.skin_pixels[o..o+4].copy_from_slice(&[0,0,0,0]);
+                                }}
+                            }
+                            self.skin_texture=None; self.skin_status="Область очищена".to_owned();
+                        }
+                    });
+            });
+            ui.label(RichText::new("Экспорт создаёт готовый PNG. Публикация через Ely.by или Microsoft/Mojang требует отдельной авторизации.")
+                .size(9.0).color(MUTED));
         });
     }
 
-    fn skin_canvas(&mut self, ui: &mut egui::Ui) {
-        let image = egui::ColorImage::from_rgba_unmultiplied([64, 64], &self.skin_pixels);
-        if let Some(texture) = self.skin_texture.as_mut() {
-            texture.set(image, egui::TextureOptions::NEAREST);
-        } else {
-            self.skin_texture = Some(ui.ctx().load_texture("skin-editor", image, egui::TextureOptions::NEAREST));
+    fn skin_canvas(&mut self,ui:&mut egui::Ui){
+        let image=egui::ColorImage::from_rgba_unmultiplied([64,64],&self.skin_pixels);
+        if let Some(texture)=self.skin_texture.as_mut(){texture.set(image,egui::TextureOptions::NEAREST);}
+        else{self.skin_texture=Some(ui.ctx().load_texture("skin-editor",image,egui::TextureOptions::NEAREST));}
+        let side=64.0*self.skin_zoom;
+        let (rect,response)=ui.allocate_exact_size(egui::vec2(side,side),egui::Sense::click_and_drag());
+        let painter=ui.painter(); let tile=side/8.0;
+        for y in 0..8{for x in 0..8{
+            let c=if (x+y)%2==0{PANEL_LIGHT}else{Color32::from_rgb(28,37,45)};
+            painter.rect_filled(egui::Rect::from_min_size(rect.min+egui::vec2(x as f32*tile,y as f32*tile),egui::vec2(tile,tile)),Rounding::same(0.0),c);
+        }}
+        if let Some(texture)=self.skin_texture.as_ref(){
+            painter.image(texture.id(),rect,egui::Rect::from_min_max(egui::pos2(0.0,0.0),egui::pos2(1.0,1.0)),Color32::WHITE);
         }
-        let size = egui::vec2(384.0, 384.0);
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-        ui.painter().rect_filled(rect, Rounding::same(3.0), PANEL_LIGHT);
-        if let Some(texture) = self.skin_texture.as_ref() {
-            ui.painter().image(
-                texture.id(),
-                rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
+        for i in 0..=64{
+            let x=rect.left()+rect.width()*i as f32/64.0; let y=rect.top()+rect.height()*i as f32/64.0;
+            let major=i%8==0; let c=if major{Color32::from_white_alpha(90)}else{Color32::from_white_alpha(25)};
+            painter.line_segment([egui::pos2(x,rect.top()),egui::pos2(x,rect.bottom())],Stroke::new(if major{1.0}else{0.5},c));
+            painter.line_segment([egui::pos2(rect.left(),y),egui::pos2(rect.right(),y)],Stroke::new(if major{1.0}else{0.5},c));
         }
-        for index in 0..=64 {
-            let x = rect.left() + rect.width() * index as f32 / 64.0;
-            let y = rect.top() + rect.height() * index as f32 / 64.0;
-            let color = if index % 8 == 0 { Color32::from_white_alpha(45) } else { Color32::from_white_alpha(14) };
-            ui.painter().line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())], Stroke::new(0.5, color));
-            ui.painter().line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)], Stroke::new(0.5, color));
+        for (x,y,w,h) in skin_region_rects(&self.skin_region){
+            let area=egui::Rect::from_min_max(egui::pos2(rect.left()+x as f32*side/64.0,rect.top()+y as f32*side/64.0),
+                egui::pos2(rect.left()+(x+w) as f32*side/64.0,rect.top()+(y+h) as f32*side/64.0));
+            painter.rect_stroke(area,Rounding::same(0.0),Stroke::new(1.5,self.accent_color()));
         }
-        if (response.clicked() || response.dragged()) && response.hovered() {
-            if let Some(position) = response.interact_pointer_pos() {
-                let x = (((position.x - rect.left()) / rect.width()) * 64.0).floor() as i32;
-                let y = (((position.y - rect.top()) / rect.height()) * 64.0).floor() as i32;
-                if (0..64).contains(&x) && (0..64).contains(&y) {
-                    let offset = ((y as usize * 64 + x as usize) * 4) as usize;
-                    self.skin_pixels[offset..offset + 4].copy_from_slice(&self.skin_color.to_array());
-                    self.skin_status = format!("Изменён пиксель: {x}, {y}");
+        if response.hovered(){
+            if let Some(pos)=response.interact_pointer_pos(){
+                let x=(((pos.x-rect.left())/side)*64.0).floor().clamp(0.0,63.0) as usize;
+                let y=(((pos.y-rect.top())/side)*64.0).floor().clamp(0.0,63.0) as usize;
+                if response.drag_started()&&self.skin_tool!=SkinTool::Eyedropper{self.push_skin_undo();}
+                if response.dragged()||response.clicked(){
+                    match self.skin_tool{
+                        SkinTool::Eyedropper=>{let o=(y*64+x)*4;self.skin_color=Color32::from_rgba_unmultiplied(
+                            self.skin_pixels[o],self.skin_pixels[o+1],self.skin_pixels[o+2],self.skin_pixels[o+3]);}
+                        SkinTool::Fill if response.clicked()=>{self.push_skin_undo();self.fill_skin_area(x,y,self.skin_color);}
+                        SkinTool::Brush|SkinTool::Eraser=>{
+                            if response.clicked()&&!response.dragged(){self.push_skin_undo();}
+                            let c=if self.skin_tool==SkinTool::Eraser{Color32::TRANSPARENT}else{self.skin_color};
+                            self.paint_skin_pixel(x,y,c);
+                        }
+                        _=>{}
+                    }
                     ui.ctx().request_repaint();
                 }
             }
+        }
+    }
+
+    fn skin_preview(&mut self,ui:&mut egui::Ui){
+        if self.skin_texture.is_none(){
+            let image=egui::ColorImage::from_rgba_unmultiplied([64,64],&self.skin_pixels);
+            self.skin_texture=Some(ui.ctx().load_texture("skin-editor-preview",image,egui::TextureOptions::NEAREST));
+        }
+        if let Some(texture)=self.skin_texture.as_ref(){
+            let (rect,_)=ui.allocate_exact_size(egui::vec2(190.0,245.0),egui::Sense::hover());
+            let painter=ui.painter();painter.rect_filled(rect,Rounding::same(8.0),PANEL_LIGHT);
+            let uv=|x:u32,y:u32,w:u32,h:u32|egui::Rect::from_min_max(egui::pos2(x as f32/64.0,y as f32/64.0),
+                egui::pos2((x+w) as f32/64.0,(y+h) as f32/64.0));
+            let draw=|dest:egui::Rect,src:egui::Rect|painter.image(texture.id(),dest,src,Color32::WHITE);
+            let x=rect.left();let y=rect.top();
+            draw(egui::Rect::from_min_size(egui::pos2(x+66.0,y+7.0),egui::vec2(58.0,58.0)),uv(8,8,8,8));
+            draw(egui::Rect::from_min_size(egui::pos2(x+57.0,y+69.0),egui::vec2(76.0,108.0)),uv(20,20,8,12));
+            draw(egui::Rect::from_min_size(egui::pos2(x+31.0,y+69.0),egui::vec2(23.0,108.0)),uv(44,20,4,12));
+            draw(egui::Rect::from_min_size(egui::pos2(x+136.0,y+69.0),egui::vec2(23.0,108.0)),uv(36,52,4,12));
+            draw(egui::Rect::from_min_size(egui::pos2(x+58.0,y+180.0),egui::vec2(34.0,57.0)),uv(4,20,4,12));
+            draw(egui::Rect::from_min_size(egui::pos2(x+98.0,y+180.0),egui::vec2(34.0,57.0)),uv(20,52,4,12));
         }
     }
 
@@ -2056,6 +2195,16 @@ fn scan_installed_profiles(game_dir: &std::path::Path) -> Vec<InstalledProfile> 
     result
 }
 
+fn skin_region_rects(region:&str)->Vec<(usize,usize,usize,usize)>{
+    match region{
+        "Голова"=>vec![(0,0,32,16)],
+        "Тело"=>vec![(16,16,24,16)],
+        "Руки"=>vec![(40,16,16,16),(32,48,16,16)],
+        "Ноги"=>vec![(0,16,16,16),(16,48,16,16)],
+        _=>vec![(0,0,64,64)],
+    }
+}
+
 fn configure_style(ctx: &egui::Context, accent: Color32) {
     let mut style = (*ctx.style()).clone();
     style.visuals = egui::Visuals::dark();
@@ -2102,7 +2251,7 @@ fn valid_username(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_username;
+    use super::{skin_region_rects, valid_username};
 
     #[test]
     fn validates_offline_usernames() {
@@ -2110,5 +2259,12 @@ mod tests {
         assert!(!valid_username("ab"));
         assert!(!valid_username("two words"));
         assert!(!valid_username("Иван"));
+    }
+
+    #[test]
+    fn skin_region_shortcuts_cover_uv_atlas_parts(){
+        assert_eq!(skin_region_rects("Голова"),vec![(0,0,32,16)]);
+        assert_eq!(skin_region_rects("Руки").len(),2);
+        assert_eq!(skin_region_rects("Вся текстура"),vec![(0,0,64,64)]);
     }
 }

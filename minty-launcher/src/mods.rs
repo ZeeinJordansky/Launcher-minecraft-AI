@@ -135,6 +135,8 @@ pub struct ModProject {
     pub icon_url: Option<String>,
     #[serde(default)]
     pub latest_version: Option<String>,
+    #[serde(default)]
+    pub project_type: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,9 +158,15 @@ struct ProjectFile {
     hashes: std::collections::HashMap<String, String>,
 }
 
-pub fn search(query: &str, game_version: &str, loader: &str) -> Result<Vec<ModProject>> {
+pub fn search(query: &str, game_version: &str, loader: &str, project_type: &str, sort_index: &str) -> Result<Vec<ModProject>> {
     let client = client()?;
-    let mut facets = vec![vec!["project_type:mod".to_owned()]];
+    let project_type = match project_type {
+        "modpack" => "modpack",
+        "resourcepack" => "resourcepack",
+        "shader" => "shader",
+        _ => "mod",
+    };
+    let mut facets = vec![vec![format!("project_type:{project_type}")]];
     if !game_version.trim().is_empty() {
         facets.push(vec![format!("versions:{game_version}")]);
     }
@@ -171,7 +179,7 @@ pub fn search(query: &str, game_version: &str, loader: &str) -> Result<Vec<ModPr
         .query(&[
             ("query", query),
             ("limit", "30"),
-            ("index", "downloads"),
+            ("index", if matches!(sort_index, "relevance" | "downloads" | "follows" | "newest" | "updated") { sort_index } else { "downloads" }),
             ("facets", facets.as_str()),
         ])
         .send()
