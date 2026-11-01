@@ -86,6 +86,7 @@ pub struct MintyApp {
     mod_search: String,
     mod_category: String,
     mod_sort: String,
+    mod_filter_compatible: bool,
     mod_status: String,
     mod_searching: bool,
     mod_installing: bool,
@@ -141,6 +142,7 @@ pub struct MintyApp {
 impl MintyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config = config::load().unwrap_or_default();
+        cc.egui_ctx.set_pixels_per_point(config.ui_scale.clamp(0.80, 1.50));
         configure_style(&cc.egui_ctx, Color32::from_rgb(
             config.accent_color[0], config.accent_color[1], config.accent_color[2],
         ));
@@ -178,7 +180,8 @@ impl MintyApp {
             mod_search: String::new(),
             mod_category: "mod".to_owned(),
             mod_sort: "downloads".to_owned(),
-            mod_status: "Каталог Modrinth: моды, сборки, ресурспаки и шейдеры.".to_owned(),
+            mod_filter_compatible: false,
+            mod_status: "Каталог Modrinth: популярные проекты загружаются автоматически.".to_owned(),
             mod_searching: false,
             mod_installing: false,
             mod_search_rx: None,
@@ -399,9 +402,23 @@ impl MintyApp {
         }
         if let Ok(result) = self.avatar_rx.try_recv() {
             if let Ok(avatar) = result {
+                let mut rgba = avatar.rgba;
+                let center_x = avatar.width as f32 * 0.5;
+                let center_y = avatar.height as f32 * 0.5;
+                let radius = (avatar.width.min(avatar.height) as f32 * 0.5) - 0.5;
+                for y in 0..avatar.height {
+                    for x in 0..avatar.width {
+                        let dx = x as f32 + 0.5 - center_x;
+                        let dy = y as f32 + 0.5 - center_y;
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        let edge = (radius + 0.75 - distance).clamp(0.0, 1.0);
+                        let alpha = &mut rgba[(y * avatar.width + x) * 4 + 3];
+                        *alpha = ((*alpha as f32) * edge).round() as u8;
+                    }
+                }
                 let image = egui::ColorImage::from_rgba_unmultiplied(
                     [avatar.width, avatar.height],
-                    &avatar.rgba,
+                    &rgba,
                 );
                 self.avatar_texture = Some(self.ctx.load_texture(
                     "profile-avatar",
@@ -490,10 +507,19 @@ impl MintyApp {
 
     fn search_mod_store(&mut self) {
         if self.mod_searching || self.mod_installing { return; }
-        let query = self.mod_search.trim().to_owned();
-        let game_version = self.config.selected_version.clone();
-        let loader = self.config.selected_loader.clone();
+        let query = if self.mod_category == "world" && self.mod_search.trim().is_empty() {
+            "map".to_owned()
+        } else {
+            self.mod_search.trim().to_owned()
+        };
+        let game_version = if self.mod_filter_compatible {
+            if self.config.selected_version == "latest-release" { self.latest_release.clone() }
+            else { self.config.selected_version.clone() }
+        } else { String::new() };
         let category = self.mod_category.clone();
+        let loader = if category == "world" { "__world_catalog__".to_owned() }
+            else if self.mod_filter_compatible { self.config.selected_loader.clone() }
+            else { "Vanilla".to_owned() };
         let sort = self.mod_sort.clone();
         let (tx, rx) = unbounded();
         self.mod_search_rx = Some(rx);
@@ -510,28 +536,37 @@ impl MintyApp {
         });
     }
 
-    fn install_store_mod(&mut self, slug: String) {
+    fn install_store_project(&mut self, slug: String) {
         if self.mod_installing { return; }
-        if self.mod_category != "mod" {
-            self.mod_status = "Для этого типа проекта открой его страницу: модпаки, ресурспаки и шейдеры требуют разных форматов импорта.".to_owned();
-            let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, slug));
+        let category = self.mod_category.clone();
+        if category == "modpack" {
+            self.mod_status = "Модпаки имеют отдельный формат .mrpack и требуют установки зависимостей. Открываю страницу сборки.".to_owned();
+            let _ = open::that(format!("https://modrinth.com/modpack/{slug}"));
             return;
         }
-        if self.config.selected_loader == "Vanilla" {
+        if category == "mod" && self.config.selected_loader == "Vanilla" {
             self.mod_status = "Для модов сначала выбери Fabric, Forge, NeoForge или Quilt.".to_owned();
             return;
         }
-        let game_version = self.config.selected_version.clone();
+        let game_version = if self.config.selected_version == "latest-release" { self.latest_release.clone() }
+            else { self.config.selected_version.clone() };
         let loader = self.config.selected_loader.clone();
-        let mods_dir = self.profile_instance_dir().join("mods");
+        let instance = self.profile_instance_dir();
+        let target_dir = match category.as_str() {
+            "mod" => instance.join("mods"),
+            "resourcepack" => instance.join("resourcepacks"),
+            "shader" => instance.join("shaderpacks"),
+            "world" => instance.join("saves"),
+            _ => instance,
+        };
         let (tx, rx) = unbounded();
         self.mod_install_rx = Some(rx);
         self.mod_installing = true;
         self.mod_status = format!("Устанавливаю {slug}…");
         let ctx = self.ctx.clone();
         thread::spawn(move || {
-            tx.send(mods::install(&slug, &game_version, &loader, &mods_dir)
-                .map(|path| format!("Мод установлен: {}", path.display()))
+            tx.send(mods::install_project(&slug, &game_version, &loader, &category, &target_dir)
+                .map(|path| format!("Проект установлен: {}", path.display()))
                 .map_err(|error| format!("{error:#}"))).ok();
             ctx.request_repaint();
         });
@@ -539,7 +574,7 @@ impl MintyApp {
 
     fn import_game_files(&mut self) {
         let Some(files) = rfd::FileDialog::new()
-            .add_filter("Minecraft files", &["jar", "mcpack", "mcaddon", "mcworld"])
+            .add_filter("Minecraft files", &["jar", "zip", "mcpack", "mcaddon", "mcworld"])
             .set_title("Импортировать мод или дополнение")
             .pick_files() else { return; };
         let mut imported = 0usize;
@@ -560,6 +595,13 @@ impl MintyApp {
                         Ok(())
                     })();
                     match result { Ok(()) => imported += 1, Err(error) => errors.push(format!("{}: {error}", path.display())) }
+                }
+                "zip" => {
+                    let saves_dir = self.profile_instance_dir().join("saves");
+                    match mods::import_world_archive(&path, &saves_dir) {
+                        Ok(destination) => { imported += 1; self.mod_status = format!("Карта импортирована: {}", destination.display()); }
+                        Err(error) => errors.push(format!("{}: {error:#}", path.display())),
+                    }
                 }
                 "mcpack" | "mcaddon" | "mcworld" => {
                     match bedrock::import_addon(&path) {
@@ -1001,7 +1043,7 @@ impl MintyApp {
     fn avatar_widget(&self, ui: &mut egui::Ui, size: f32) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
         let center = rect.center();
-        let radius = size * 0.47;
+        let radius = size * 0.49;
         ui.painter().circle_filled(center, radius, PANEL_LIGHT);
         if let Some(texture) = &self.avatar_texture {
             ui.painter().image(
@@ -1041,53 +1083,42 @@ impl MintyApp {
             .exact_height(42.0)
             .frame(egui::Frame::none().fill(Color32::from_rgb(10, 14, 19)))
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.horizontal(|ui| {
-                    ui.add_space(14.0);
-                    // Reserve the exact width of all three controls and the right inset.
-                    // The drag region therefore never pushes controls beyond the window edge.
-                    let controls_width = 3.0 * 42.0 + 3.0 * 6.0 + 18.0;
-                    let drag_width = (ui.available_width() - controls_width).max(90.0);
+                    ui.add_space(12.0);
+                    // The drag area is calculated only after reserving the exact button and margin widths.
+                    let controls_width = 3.0 * 44.0 + 3.0 * 5.0 + 12.0;
+                    let drag_width = (ui.available_width() - controls_width).max(0.0);
                     let (drag_rect, drag_response) = ui.allocate_exact_size(
-                        // Leave 6 px at the top and bottom for native resize hit zones.
-                        egui::vec2(drag_width, 30.0), egui::Sense::click_and_drag()
-                    );
-                    ui.painter().circle_filled(
-                        drag_rect.left_center() + egui::vec2(2.0, 0.0),
-                        3.5,
-                        self.accent_color(),
-                    );
-                    ui.painter().text(
-                        drag_rect.left_center() + egui::vec2(13.0, 0.0),
+                        egui::vec2(drag_width, 34.0), egui::Sense::click_and_drag());
+                    ui.painter().circle_filled(drag_rect.left_center() + egui::vec2(3.0, 0.0), 3.4, self.accent_color());
+                    ui.painter().text(drag_rect.left_center() + egui::vec2(14.0, 0.0),
                         egui::Align2::LEFT_CENTER,
-                        format!("MINTY  /  LAUNCHER     {}", env!("CARGO_PKG_VERSION")),
-                        FontId::proportional(10.5),
-                        Color32::from_rgb(177, 191, 194),
-                    );
-                    if drag_response.drag_started() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                    }
+                        format!("MINTY  /  LAUNCHER     v{}", env!("CARGO_PKG_VERSION")),
+                        FontId::proportional(10.5), Color32::from_rgb(174, 190, 190));
+                    if drag_response.drag_started() { ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag); }
                     if drag_response.double_clicked() {
                         let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
                         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                     }
-                    if titlebar_control_button(ui, "minimize", "−", false).clicked() {
+                    ui.add_space(5.0);
+                    if titlebar_control_button(ui, "minimize", false).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
+                    ui.add_space(5.0);
                     let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
-                    if titlebar_control_button(ui, "maximize", if maximized { "❐" } else { "□" }, false).clicked() {
+                    if titlebar_control_button(ui, if maximized { "restore" } else { "maximize" }, false).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                     }
-                    if titlebar_control_button(ui, "close", "×", true).clicked() {
+                    ui.add_space(5.0);
+                    if titlebar_control_button(ui, "close", true).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     ui.add_space(12.0);
                 });
                 let bounds = ui.min_rect();
-                ui.painter().line_segment(
-                    [bounds.left_bottom(), bounds.right_bottom()],
-                    Stroke::new(1.0, Color32::from_rgb(30, 39, 47)),
-                );
+                ui.painter().line_segment([bounds.left_bottom(), bounds.right_bottom()],
+                    Stroke::new(1.0, Color32::from_rgb(30, 39, 47)));
             });
     }
 
@@ -1104,9 +1135,9 @@ impl MintyApp {
 
     fn top_navigation(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("minty_top_navigation")
-            .exact_height(76.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(18, 24, 31))
-                .inner_margin(egui::Margin::symmetric(22.0, 9.0)))
+            .exact_height(78.0)
+            .frame(egui::Frame::none().fill(Color32::from_rgb(18, 25, 32))
+                .inner_margin(egui::Margin::symmetric(20.0, 8.0)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let (logo, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
@@ -1121,7 +1152,7 @@ impl MintyApp {
                         ui.label(RichText::new("MINTY").size(18.0).strong().color(TEXT));
                         ui.label(RichText::new("MINECRAFT  ·  JAVA & BEDROCK").size(8.0).strong().color(MUTED));
                     });
-                    ui.add_space(28.0);
+                    ui.add_space(24.0);
                     self.top_tab(ui, self.ui_label("home"), Page::Home);
                     self.top_tab(ui, self.ui_label("minecraft"), Page::Minecraft);
                     self.top_tab(ui, self.ui_label("settings"), Page::Settings);
@@ -1179,7 +1210,7 @@ impl MintyApp {
     fn top_tab(&mut self, ui: &mut egui::Ui, label: &str, page: Page) {
         let selected = self.page == page;
         let response = ui.add_sized(
-            [108.0, 44.0],
+            [112.0, 46.0],
             egui::Button::new(RichText::new(label).strong().size(12.5)
                 .color(if selected { TEXT } else { MUTED }))
                 .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
@@ -1208,6 +1239,7 @@ impl MintyApp {
         } else { self.config.selected_profile_id.clone() };
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.add_space(8.0);
             egui::Frame::none().fill(Color32::from_rgb(22, 36, 37))
                 .stroke(Stroke::new(1.0, Color32::from_rgb(53, 79, 72)))
@@ -1354,11 +1386,11 @@ impl MintyApp {
     }
 
     fn minecraft_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(5.0);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(RichText::new("MINECRAFT").size(9.0).strong().color(self.accent_color()));
-                ui.label(RichText::new(self.ui_label("minecraft")).size(27.0).strong().color(TEXT));
+                ui.label(RichText::new(self.ui_label("minecraft")).size(25.0).strong().color(TEXT));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Открыть папку игры").clicked() {
@@ -1368,26 +1400,33 @@ impl MintyApp {
             });
         });
         ui.add_space(12.0);
+        let tabs_width = ui.available_width();
+        let tab_width = ((tabs_width - ui.spacing().item_spacing.x * 4.0) / 5.0).max(1.0);
         ui.horizontal(|ui| {
-            self.minecraft_tab_button(ui, self.ui_label("builds"), MinecraftTab::Builds);
-            self.minecraft_tab_button(ui, self.ui_label("versions"), MinecraftTab::Versions);
-            self.minecraft_tab_button(ui, self.ui_label("profile"), MinecraftTab::Profile);
-            self.minecraft_tab_button(ui, self.ui_label("mods"), MinecraftTab::Mods);
-            self.minecraft_tab_button(ui, self.ui_label("bedrock"), MinecraftTab::Bedrock);
+            self.minecraft_tab_button(ui, self.ui_label("builds"), MinecraftTab::Builds, tab_width);
+            self.minecraft_tab_button(ui, self.ui_label("versions"), MinecraftTab::Versions, tab_width);
+            self.minecraft_tab_button(ui, self.ui_label("profile"), MinecraftTab::Profile, tab_width);
+            self.minecraft_tab_button(ui, self.ui_label("mods"), MinecraftTab::Mods, tab_width);
+            self.minecraft_tab_button(ui, self.ui_label("bedrock"), MinecraftTab::Bedrock, tab_width);
         });
         ui.add_space(10.0);
-        match self.minecraft_tab {
-            MinecraftTab::Builds => self.builds_page(ui),
-            MinecraftTab::Versions => self.installations_page(ui),
-            MinecraftTab::Profile => self.profile_page(ui),
-            MinecraftTab::Mods => self.mods_page(ui),
-            MinecraftTab::Bedrock => self.bedrock_page(ui),
-        }
+        let page_size = ui.available_size();
+        ui.allocate_ui_with_layout(page_size, Layout::top_down(Align::Min), |page_ui| {
+            page_ui.set_min_width(page_size.x);
+            page_ui.set_min_height(page_size.y);
+            match self.minecraft_tab {
+                MinecraftTab::Builds => self.builds_page(page_ui),
+                MinecraftTab::Versions => self.installations_page(page_ui),
+                MinecraftTab::Profile => self.profile_page(page_ui),
+                MinecraftTab::Mods => self.mods_page(page_ui),
+                MinecraftTab::Bedrock => self.bedrock_page(page_ui),
+            }
+        });
     }
 
-    fn minecraft_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: MinecraftTab) {
+    fn minecraft_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: MinecraftTab, width: f32) {
         let selected = self.minecraft_tab == tab;
-        let response = ui.add_sized([112.0, 40.0],
+        let response = ui.add_sized([width, 40.0],
             egui::Button::new(RichText::new(label).strong().size(11.5)
                 .color(if selected { TEXT } else { MUTED }))
                 .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
@@ -1518,206 +1557,254 @@ impl MintyApp {
 
     fn mods_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.add_space(5.0);
-            ui.label(RichText::new("Моды и дополнения").size(23.0).strong().color(TEXT));
-            ui.label(RichText::new("Импортируй свои файлы или найди моды в каталоге Modrinth.")
-                .size(12.0).color(MUTED));
-            ui.add_space(12.0);
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
-                .inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("ВЕРСИЯ").size(9.0).strong().color(MUTED));
-                            ui.label(RichText::new(&self.config.selected_version).strong().color(TEXT));
-                        });
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("ЗАГРУЗЧИК").size(9.0).strong().color(MUTED));
-                            ui.label(RichText::new(&self.config.selected_loader).strong().color(self.accent_color()));
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button("Открыть папку mods").clicked() { self.open_java_mods_folder(); }
-                            if ui.button("Импортировать файлы").clicked() { self.import_game_files(); }
-                        });
-                    });
-                    ui.add_space(10.0);
-                    ui.label(RichText::new("КАТАЛОГ ПРОЕКТОВ").size(9.0).strong().color(MUTED));
-                    let mut category_changed = false;
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, category) in [
-                            ("Моды", "mod"), ("Модпаки", "modpack"),
-                            ("Ресурспаки", "resourcepack"), ("Шейдеры", "shader"),
-                        ] {
-                            let selected = self.mod_category == category;
-                            if ui.add_sized([116.0, 34.0], egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
-                                .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
-                                self.mod_category = category.to_owned();
-                                category_changed = true;
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Сортировка").size(10.0).color(MUTED));
-                        egui::ComboBox::from_id_source("mod_catalogue_sort")
-                            .selected_text(match self.mod_sort.as_str() {
-                                "follows" => "По подпискам",
-                                "newest" => "Сначала новые",
-                                "updated" => "Недавно обновлены",
-                                "relevance" => "По релевантности",
-                                _ => "По загрузкам",
-                            })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.mod_sort, "downloads".to_owned(), "По загрузкам");
-                                ui.selectable_value(&mut self.mod_sort, "follows".to_owned(), "По подпискам");
-                                ui.selectable_value(&mut self.mod_sort, "newest".to_owned(), "Сначала новые");
-                                ui.selectable_value(&mut self.mod_sort, "updated".to_owned(), "Недавно обновлены");
-                                ui.selectable_value(&mut self.mod_sort, "relevance".to_owned(), "По релевантности");
-                            });
-                    });
-                    if category_changed {
-                        self.mod_search.clear();
-                        self.search_mod_store();
-                    }
-                    ui.horizontal(|ui| {
-                        let search_width = (ui.available_width() - 174.0).max(180.0);
-                        ui.add_sized([search_width, 36.0], egui::TextEdit::singleline(&mut self.mod_search)
-                            .hint_text("Найти мод: Sodium, JEI, Xaero's…"));
-                        if ui.add_enabled(!self.mod_searching && !self.mod_installing,
-                            egui::Button::new(if self.mod_searching { "Ищу…" } else { "Найти на Modrinth" })
-                                .min_size(egui::vec2(160.0, 36.0))
-                                .fill(self.accent_color()).rounding(Rounding::same(8.0))).clicked() {
-                            self.search_mod_store();
-                        }
-                    });
-                    ui.label(RichText::new("Для установки модов нужен Fabric, Forge, NeoForge или Quilt. Modrinth покажет совместимые версии.")
+            ui.set_min_width(ui.available_width());
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.vertical(|heading| {
+                    heading.label(RichText::new("КАТАЛОГ MINTY").size(9.0).strong().color(self.accent_color()));
+                    heading.label(RichText::new("Контент Minecraft").size(24.0).strong().color(TEXT));
+                    heading.label(RichText::new("Моды, сборки, карты и оформление игры.").size(11.0).color(MUTED));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |right| {
+                    right.label(RichText::new(format!("Minecraft {}  ·  {}", self.config.selected_version, self.config.selected_loader))
                         .size(10.0).color(MUTED));
-                    ui.label(RichText::new(&self.mod_status).size(10.0).color(self.accent_color()));
-                    ui.horizontal(|ui| {
-                        if ui.button("Проверить конфликты").clicked() {
-                            self.mod_issues = mods::analyze(&self.profile_instance_dir().join("mods"), &self.config.selected_loader);
-                            self.mod_status = format!("Проверка завершена. Замечаний: {}", self.mod_issues.len());
-                        }
-                        if ui.button("Каталог CurseForge ↗").clicked() {
-                            let _ = open::that("https://www.curseforge.com/minecraft/search?class=mc-mods");
-                        }
-                    });
-                    for issue in &self.mod_issues {
-                        let color = if issue.critical { RED } else { self.accent_color() };
-                        ui.label(RichText::new(format!("{} {}", if issue.critical { "⚠" } else { "✓" }, issue.title)).size(10.0).strong().color(color));
-                        ui.label(RichText::new(&issue.details).size(9.0).color(MUTED));
-                    }
                 });
+            });
             ui.add_space(12.0);
-            let projects = self.mods.clone();
-            let mut requested = None;
-            if projects.is_empty() {
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
-                    .inner_margin(egui::Margin::same(18.0)).show(ui, |ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new(if self.mod_searching { "Ищем проекты в Modrinth…" } else { "Каталог пока пуст" })
-                                .size(14.0).strong().color(TEXT));
-                            ui.label(RichText::new("Попробуй изменить запрос или выбрать другую категорию.")
-                                .size(10.0).color(MUTED));
-                        });
-                    });
-            } else {
-                ui.columns(2, |columns| {
-                    for (index, project) in projects.iter().enumerate() {
-                        let card_ui = &mut columns[index % 2];
-                        egui::Frame::none()
-                            .fill(PANEL)
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(43, 57, 66)))
-                            .rounding(Rounding::same(14.0))
-                            .inner_margin(egui::Margin::same(12.0))
-                            .show(card_ui, |ui| {
-                                ui.set_min_height(178.0);
-                                ui.horizontal(|ui| {
-                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(rect, Rounding::same(11.0), PANEL_LIGHT);
-                                    ui.painter().rect_stroke(rect, Rounding::same(11.0), Stroke::new(1.0, self.accent_color()));
-                                    let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
-                                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, mark,
-                                        FontId::proportional(20.0), self.accent_color());
-                                    ui.vertical(|ui| {
-                                        ui.add_sized([ui.available_width(), 19.0],
-                                            egui::Label::new(RichText::new(&project.title).strong().color(TEXT).size(12.5)).truncate());
-                                        ui.label(RichText::new(format!("{} загрузок", project.downloads))
-                                            .size(9.0).color(self.accent_color()));
-                                        if let Some(version) = &project.latest_version {
-                                            ui.add_sized([ui.available_width(), 16.0],
-                                                egui::Label::new(RichText::new(format!("Версия {version}")).size(9.0).color(MUTED)).truncate());
-                                        }
-                                    });
-                                });
-                                ui.add_space(6.0);
-                                let description: String = project.description.chars().take(82).collect();
-                                ui.add_sized([ui.available_width(), 38.0],
-                                    egui::Label::new(RichText::new(description).size(9.5).color(MUTED)).wrap());
-                                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                                    ui.horizontal(|ui| {
-                                        let primary_label = if self.mod_category == "mod" { "Установить" } else { "Открыть проект" };
-                                        let primary = ui.add_sized([112.0, 32.0],
-                                            egui::Button::new(if self.mod_installing && self.mod_category == "mod" { "Установка…" } else { primary_label })
-                                                .fill(if self.mod_category == "mod" { self.accent_color() } else { PANEL_LIGHT })
-                                                .rounding(Rounding::same(8.0)));
-                                        if primary.clicked() {
-                                            if self.mod_category == "mod" { requested = Some(project.slug.clone()); }
-                                            else { let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug)); }
-                                        }
-                                        if ui.add_sized([92.0, 32.0], egui::Button::new("Страница ↗")
-                                            .fill(PANEL_LIGHT).rounding(Rounding::same(8.0))).clicked() {
-                                            let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug));
-                                        }
-                                    });
-                                });
-                            });
-                        columns[index % 2].add_space(8.0);
-                    }
-                });
-                if let Some(slug) = requested { self.install_store_mod(slug); }
-            }
-            ui.add_space(13.0);
-            let mods_dir = self.profile_instance_dir().join("mods");
+            let instance = self.profile_instance_dir();
+            let mods_dir = instance.join("mods");
             let installed_mods: Vec<PathBuf> = std::fs::read_dir(&mods_dir)
                 .map(|entries| entries.flatten().map(|entry| entry.path())
                     .filter(|path| path.is_file() && path.extension().and_then(|ext| ext.to_str())
                         .map(|ext| ext.eq_ignore_ascii_case("jar")).unwrap_or(false))
                     .collect())
                 .unwrap_or_default();
-            ui.label(RichText::new(format!("УСТАНОВЛЕННЫЕ JAVA-МОДЫ · {}", installed_mods.len()))
-                .size(9.0).strong().color(MUTED));
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0))
-                .inner_margin(egui::Margin::same(11.0)).show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(175.0).show(ui, |ui| {
+            let categories = [
+                ("Модпаки", "modpack"),
+                ("Моды", "mod"),
+                ("Ресурс-паки", "resourcepack"),
+                ("Карты", "world"),
+                ("Шейдеры", "shader"),
+            ];
+            let mut requested: Option<String> = None;
+            let mut reload_catalog = false;
+
+            ui.horizontal(|ui| {
+                let side_width = 214.0_f32.min((ui.available_width() * 0.30).max(176.0));
+                egui::Frame::none()
+                    .fill(PANEL)
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(42, 55, 64)))
+                    .rounding(Rounding::same(14.0))
+                    .inner_margin(egui::Margin::same(12.0))
+                    .show(ui, |side| {
+                        side.set_min_width(side_width);
+                        side.set_max_width(side_width);
+                        side.label(RichText::new("МОЯ БИБЛИОТЕКА").size(9.0).strong().color(self.accent_color()));
+                        side.add_space(3.0);
+                        side.label(RichText::new("Установленные моды").size(15.0).strong().color(TEXT));
+                        side.label(RichText::new(format!("{} файлов JAR", installed_mods.len())).size(10.0).color(MUTED));
+                        side.add_space(8.0);
+                        if side.add_sized([side.available_width(), 34.0],
+                            egui::Button::new("＋  Импортировать файлы")
+                                .fill(self.accent_color()).rounding(Rounding::same(9.0))).clicked() {
+                            self.import_game_files();
+                        }
+                        if side.add_sized([side.available_width(), 32.0],
+                            egui::Button::new("Открыть папку mods")
+                                .fill(PANEL_LIGHT).rounding(Rounding::same(9.0))).clicked() {
+                            self.open_java_mods_folder();
+                        }
+                        side.add_space(10.0);
+                        side.separator();
                         if installed_mods.is_empty() {
-                            ui.label(RichText::new("Папка mods пока пуста. Импортируй .jar или установи мод из каталога.")
-                                .size(10.0).color(MUTED));
-                        }
-                        let mut remove_path = None;
-                        for path in &installed_mods {
-                            ui.horizontal(|ui| {
-                                let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("mod.jar");
-                                ui.label(RichText::new("◆").color(self.accent_color()));
-                                ui.add_sized([260.0, 28.0], egui::Label::new(RichText::new(name).size(10.0).color(TEXT)).truncate());
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.add_sized([88.0, 28.0], egui::Button::new("Удалить")
-                                        .fill(Color32::from_rgb(62, 35, 42)).rounding(Rounding::same(7.0))).clicked() {
-                                        remove_path = Some(path.clone());
-                                    }
-                                });
+                            side.add_space(6.0);
+                            side.label(RichText::new("Здесь появятся моды после установки или импорта.").size(10.0).color(MUTED));
+                        } else {
+                            egui::ScrollArea::vertical().max_height(390.0).auto_shrink([false, false]).show(side, |list| {
+                                for path in &installed_mods {
+                                    let filename = path.file_name().and_then(|v| v.to_str()).unwrap_or("mod.jar");
+                                    list.horizontal(|row| {
+                                        row.label(RichText::new("◆").color(self.accent_color()).size(10.0));
+                                        row.add_sized([side_width - 55.0, 23.0],
+                                            egui::Label::new(RichText::new(filename).size(9.5).color(TEXT)).truncate());
+                                    });
+                                }
                             });
-                            ui.separator();
                         }
-                        if let Some(path) = remove_path {
-                            match std::fs::remove_file(&path) {
-                                Ok(()) => self.mod_status = format!("Мод удалён: {}", path.file_name().unwrap_or_default().to_string_lossy()),
-                                Err(error) => self.mod_status = format!("Не удалось удалить мод: {error}"),
+                        side.add_space(10.0);
+                        side.separator();
+                        side.label(RichText::new("ПАПКА КОНТЕНТА").size(9.0).strong().color(MUTED));
+                        side.label(RichText::new(if self.config.isolated_profiles {
+                            "Отдельная для этой сборки"
+                        } else { "Общая для всех версий" }).size(10.0).color(self.accent_color()));
+                        side.label(RichText::new(instance.display().to_string()).size(8.5).color(MUTED).weak());
+                        if side.button("Проверить конфликты").clicked() {
+                            self.mod_issues = mods::analyze(&mods_dir, &self.config.selected_loader);
+                            self.mod_status = format!("Проверка завершена. Замечаний: {}", self.mod_issues.len());
+                        }
+                    });
+
+                ui.add_space(12.0);
+                ui.vertical(|main| {
+                    main.set_min_width(main.available_width());
+                    main.label(RichText::new("КАТЕГОРИИ").size(9.0).strong().color(MUTED));
+                    let category_width = (main.available_width() / categories.len() as f32).max(1.0);
+                    main.horizontal(|tabs| {
+                        for (label, category) in categories {
+                            let selected = self.mod_category == category;
+                            let response = tabs.add_sized([category_width - 4.0, 38.0],
+                                egui::Button::new(RichText::new(label).strong().size(10.5)
+                                    .color(if selected { TEXT } else { MUTED }))
+                                    .fill(if selected { PANEL_LIGHT } else { PANEL })
+                                    .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
+                                    .rounding(Rounding::same(9.0)));
+                            paint_hover_feedback(tabs, &response, self.accent_color(), 9.0);
+                            if response.clicked() && self.mod_category != category {
+                                self.mod_category = category.to_owned();
+                                reload_catalog = true;
+                            }
+                            if selected {
+                                tabs.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(response.rect.left() + 14.0, response.rect.bottom() - 2.0),
+                                        egui::vec2((response.rect.width() - 28.0).max(8.0), 2.0)),
+                                    Rounding::same(1.0), self.accent_color());
                             }
                         }
                     });
+                    main.add_space(10.0);
+                    main.horizontal(|toolbar| {
+                        let search_width = (toolbar.available_width() - 250.0).max(120.0);
+                        toolbar.add_sized([search_width, 36.0],
+                            egui::TextEdit::singleline(&mut self.mod_search).hint_text("Поиск по названию проекта…"));
+                        if toolbar.add_enabled(!self.mod_searching && !self.mod_installing,
+                            egui::Button::new(if self.mod_searching { "Поиск…" } else { "Найти" })
+                                .min_size(egui::vec2(78.0, 36.0)).fill(self.accent_color())
+                                .rounding(Rounding::same(9.0))).clicked() {
+                            self.search_mod_store();
+                        }
+                        let old_sort = self.mod_sort.clone();
+                        egui::ComboBox::from_id_source("mod_catalogue_sort")
+                            .selected_text(match self.mod_sort.as_str() {
+                                "follows" => "Подписки", "newest" => "Новинки",
+                                "updated" => "Обновлённые", "relevance" => "Релевантность", _ => "Популярные",
+                            }).width(118.0).show_ui(toolbar, |ui| {
+                                ui.selectable_value(&mut self.mod_sort, "downloads".to_owned(), "Популярные");
+                                ui.selectable_value(&mut self.mod_sort, "follows".to_owned(), "По подпискам");
+                                ui.selectable_value(&mut self.mod_sort, "newest".to_owned(), "Сначала новые");
+                                ui.selectable_value(&mut self.mod_sort, "updated".to_owned(), "Недавно обновлены");
+                                ui.selectable_value(&mut self.mod_sort, "relevance".to_owned(), "Релевантность");
+                            });
+                        if self.mod_sort != old_sort { reload_catalog = true; }
+                    });
+                    let previous_filter = self.mod_filter_compatible;
+                    main.horizontal(|filters| {
+                        filters.label(RichText::new("ФИЛЬТРЫ").size(9.0).strong().color(MUTED));
+                        filters.checkbox(&mut self.mod_filter_compatible, "Совместимые с выбранной версией и загрузчиком");
+                        if self.mod_filter_compatible {
+                            filters.label(RichText::new(format!("{} · {}", self.config.selected_version, self.config.selected_loader))
+                                .size(9.0).color(self.accent_color()));
+                        }
+                    });
+                    if self.mod_filter_compatible != previous_filter { reload_catalog = true; }
+                    if reload_catalog { self.search_mod_store(); }
+                    main.add_space(5.0);
+                    main.horizontal(|row| {
+                        row.label(RichText::new(if self.mod_search.is_empty() { "РЕКОМЕНДУЕМЫЕ ПРОЕКТЫ" } else { "РЕЗУЛЬТАТЫ ПОИСКА" })
+                            .size(9.0).strong().color(MUTED));
+                        row.with_layout(Layout::right_to_left(Align::Center), |right| {
+                            right.label(RichText::new(&self.mod_status).size(9.0).color(self.accent_color()));
+                        });
+                    });
+                    if self.mod_category == "mod" && self.config.selected_loader == "Vanilla" {
+                        main.label(RichText::new("Для установки модов выбери Fabric, Forge, NeoForge или Quilt.")
+                            .size(9.5).color(GOLD));
+                    }
+                    if self.mods.is_empty() {
+                        egui::Frame::none().fill(PANEL).rounding(Rounding::same(12.0))
+                            .inner_margin(egui::Margin::same(20.0)).show(main, |empty| {
+                                empty.set_min_width(empty.available_width());
+                                empty.vertical_centered(|center| {
+                                    center.label(RichText::new(if self.mod_searching { "Загружаю популярные проекты…" }
+                                        else if self.mod_search.is_empty() { "Подбираю проекты для каталога" }
+                                        else { "Ничего не найдено" }).size(14.0).strong().color(TEXT));
+                                    center.label(RichText::new("Попробуй другой запрос или измени фильтры.").size(10.0).color(MUTED));
+                                });
+                            });
+                    } else {
+                        let projects = self.mods.clone();
+                        for project in &projects {
+                            egui::Frame::none()
+                                .fill(PANEL)
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(42, 55, 64)))
+                                .rounding(Rounding::same(12.0))
+                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .show(main, |card| {
+                                    card.set_min_width(card.available_width());
+                                    card.horizontal(|row| {
+                                        let (icon_rect, _) = row.allocate_exact_size(egui::vec2(58.0, 58.0), egui::Sense::hover());
+                                        row.painter().rect_filled(icon_rect, Rounding::same(12.0), PANEL_LIGHT);
+                                        let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
+                                        row.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, mark,
+                                            FontId::proportional(25.0), self.accent_color());
+                                        row.add_space(5.0);
+                                        row.vertical(|details| {
+                                            details.set_min_width(details.available_width());
+                                            details.add_sized([details.available_width(), 19.0],
+                                                egui::Label::new(RichText::new(&project.title).strong().size(12.5).color(TEXT)).truncate());
+                                            details.add_sized([details.available_width(), 16.0],
+                                                egui::Label::new(RichText::new(format!("Автор: {}", if project.author.is_empty() { "сообщество" } else { project.author.as_str() }))
+                                                    .size(9.5).color(MUTED)).truncate());
+                                            details.label(RichText::new(&project.description).size(9.5).color(TEXT));
+                                            details.horizontal(|meta| {
+                                                meta.label(RichText::new(format!("Загрузки: {}", format_compact(project.downloads)))
+                                                    .size(9.0).color(self.accent_color()));
+                                                if let Some(version) = &project.latest_version {
+                                                    meta.label(RichText::new(format!("Версия проекта: {version}")).size(9.0).color(MUTED));
+                                                }
+                                                if !project.project_type.is_empty() {
+                                                    meta.label(RichText::new(project.project_type.to_uppercase()).size(8.5).color(MUTED));
+                                                }
+                                            });
+                                        });
+                                        row.with_layout(Layout::right_to_left(Align::Center), |actions| {
+                                            let open_only = self.mod_category == "modpack";
+                                            let label = if open_only { "Открыть ↗" } else if self.mod_installing { "Установка…" }
+                                                else if self.mod_category == "world" { "Импортировать" } else { "Установить" };
+                                            let button = actions.add_enabled(!self.mod_installing,
+                                                egui::Button::new(label).min_size(egui::vec2(112.0, 36.0))
+                                                    .fill(if open_only { PANEL_LIGHT } else { self.accent_color() })
+                                                    .rounding(Rounding::same(9.0)));
+                                            if button.clicked() {
+                                                if open_only { let _ = open::that(format!("https://modrinth.com/modpack/{}", project.slug)); }
+                                                else { requested = Some(project.slug.clone()); }
+                                            }
+                                            if actions.small_button("Страница").clicked() {
+                                                let kind = if self.mod_category == "world" { "modpack" } else { self.mod_category.as_str() };
+                                                let _ = open::that(format!("https://modrinth.com/{kind}/{}", project.slug));
+                                            }
+                                        });
+                                    });
+                                });
+                            main.add_space(7.0);
+                        }
+                    }
                 });
-            ui.add_space(8.0);
-            ui.label(RichText::new("Встроенный каталог и поиск работают через Modrinth: моды устанавливаются напрямую, а сборки, ресурспаки и шейдеры открываются на странице проекта. CurseForge открывается официальным каталогом в браузере — его API требует отдельного ключа разработчика.")
-                .size(9.0).color(MUTED));
+            });
+            if let Some(slug) = requested { self.install_store_project(slug); }
+            if !self.mod_issues.is_empty() {
+                ui.add_space(10.0);
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::same(10.0)).show(ui, |issues| {
+                        issues.label(RichText::new("ПРОВЕРКА МОДОВ").size(9.0).strong().color(MUTED));
+                        for issue in &self.mod_issues {
+                            let color = if issue.critical { RED } else { self.accent_color() };
+                            issues.label(RichText::new(format!("{} {}", if issue.critical { "⚠" } else { "✓" }, issue.title))
+                                .size(10.0).strong().color(color));
+                            issues.label(RichText::new(&issue.details).size(9.0).color(MUTED));
+                        }
+                    });
+            }
         });
     }
 
@@ -2312,9 +2399,17 @@ impl MintyApp {
                         if ui.button("Открыть").clicked() { let _ = open::that(self.directory_input.trim()); }
                     });
                     ui.checkbox(&mut self.config.launch_fullscreen, "Запускать Java Edition в полноэкранном режиме");
-                    ui.checkbox(&mut self.config.isolated_profiles, "Изолировать миры, моды и настройки для каждой сборки");
-                    ui.label(RichText::new("При первом запуске в профиль копируются прежние worlds/mods/options. Исходные файлы не удаляются.")
-                        .size(10.0).color(MUTED));
+                    ui.separator();
+                    ui.label(RichText::new("ХРАНЕНИЕ МОДОВ, МИРОВ И ДОПОЛНЕНИЙ").size(9.0).strong().color(MUTED));
+                    ui.horizontal_wrapped(|row| {
+                        if row.selectable_label(!self.config.isolated_profiles, "Общая библиотека").clicked() { self.config.isolated_profiles = false; }
+                        if row.selectable_label(self.config.isolated_profiles, "Отдельно для каждой сборки").clicked() { self.config.isolated_profiles = true; }
+                    });
+                    ui.label(RichText::new(if self.config.isolated_profiles {
+                        "У каждой сборки свои mods, saves, resourcepacks, shaderpacks и конфигурации. При первом запуске общие файлы копируются в профиль, оригиналы остаются на месте."
+                    } else {
+                        "Все версии Minecraft используют общие mods, saves, resourcepacks, shaderpacks и конфигурации из папки .minecraft."
+                    }).size(10.0).color(MUTED));
                     ui.separator();
                     ui.label(RichText::new("BEDROCK").size(9.0).strong().color(MUTED));
                     egui::ComboBox::from_id_source("settings_bedrock_channel")
@@ -2426,7 +2521,27 @@ impl MintyApp {
                         }
                     });
                     ui.checkbox(&mut self.config.enable_animations, "Плавные анимации вкладок");
-                    ui.label(RichText::new("Кнопки свернуть, развернуть и закрыть используют собственную рамку Minty с акцентным цветом.")
+                    ui.separator();
+                    ui.label(RichText::new("МАСШТАБ ИНТЕРФЕЙСА").size(9.0).strong().color(MUTED));
+                    let scale_changed = ui.add(egui::Slider::new(&mut self.config.ui_scale, 0.80..=1.50)
+                        .step_by(0.05).suffix("×")).changed();
+                    ui.label(RichText::new(format!("Текущий масштаб: {}%", (self.config.ui_scale * 100.0).round() as u32))
+                        .size(10.0).color(self.accent_color()));
+                    ui.horizontal_wrapped(|row| {
+                        for (label, scale) in [("80%", 0.80), ("90%", 0.90), ("100%", 1.00), ("110%", 1.10), ("125%", 1.25), ("150%", 1.50)] {
+                            if row.selectable_label((self.config.ui_scale - scale).abs() < 0.01, label).clicked() {
+                                self.config.ui_scale = scale;
+                            }
+                        }
+                    });
+                    ui.ctx().set_pixels_per_point(self.config.ui_scale.clamp(0.80, 1.50));
+                    ui.label(RichText::new("Масштаб применяется сразу и сохраняется кнопкой «Сохранить». Подбери размер под экран и читаемость текста.")
+                        .size(10.0).color(MUTED));
+                    if scale_changed {
+                        ui.ctx().set_pixels_per_point(self.config.ui_scale.clamp(0.80, 1.50));
+                        ui.ctx().request_repaint();
+                    }
+                    ui.label(RichText::new("Кнопки управления окном имеют плавную подсветку и отдельные действия свернуть, развернуть и закрыть.")
                         .size(10.0).color(MUTED));
                     ui.label(RichText::new("Выбранный цвет применяется к рамке окна, активным вкладкам, выделению и основным кнопкам.")
                         .size(10.0).color(MUTED));
@@ -2631,42 +2746,55 @@ impl MintyApp {
     }
 }
 
-fn titlebar_control_button(ui: &mut egui::Ui, name: &str, glyph: &str, close: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(42.0, 30.0), egui::Sense::click());
-    let progress = ui.ctx().animate_value_with_time(
-        response.id.with("window-control-hover"),
-        if response.hovered() { 1.0 } else { 0.0 },
-        0.14,
-    );
-    let (base, hover) = if close {
-        ((38, 43, 51), (177, 55, 65))
-    } else {
-        ((35, 43, 52), (66, 91, 82))
+fn titlebar_control_button(ui: &mut egui::Ui, name: &str, close: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 32.0), egui::Sense::click());
+    let hover = ui.ctx().animate_value_with_time(response.id.with("window-control-hover"),
+        if response.hovered() { 1.0 } else { 0.0 }, 0.15);
+    let pressed = ui.ctx().animate_value_with_time(response.id.with("window-control-pressed"),
+        if response.is_pointer_button_down_on() { 1.0 } else { 0.0 }, 0.07);
+    let base = Color32::from_rgb(17, 22, 28);
+    let hover_color = if close { Color32::from_rgb(190, 55, 67) } else { Color32::from_rgb(47, 65, 60) };
+    let mix = |a: u8, b: u8, t: f32| -> u8 {
+        (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
     };
-    let channel = |a: u8, b: u8| -> u8 {
-        (a as f32 + (b as f32 - a as f32) * progress).round().clamp(0.0, 255.0) as u8
+    let amount = (hover + pressed * 0.22).clamp(0.0, 1.0);
+    if amount > 0.01 {
+        let fill = Color32::from_rgb(
+            mix(base.r(), hover_color.r(), amount),
+            mix(base.g(), hover_color.g(), amount),
+            mix(base.b(), hover_color.b(), amount));
+        ui.painter().rect_filled(rect.shrink2(egui::vec2(1.0, 1.0)), Rounding::same(7.0), fill);
+    }
+    let center = rect.center();
+    let icon = if close && response.hovered() { Color32::WHITE } else { Color32::from_rgb(190, 203, 203) };
+    let stroke = Stroke::new(1.5, icon);
+    match name {
+        "minimize" => {
+            ui.painter().line_segment(
+                [center + egui::vec2(-6.0, 3.0), center + egui::vec2(6.0, 3.0)], stroke);
+        }
+        "maximize" => {
+            ui.painter().rect_stroke(
+                egui::Rect::from_center_size(center, egui::vec2(11.0, 10.0)), Rounding::same(1.5), stroke);
+        }
+        "restore" => {
+            let back = egui::Rect::from_center_size(center + egui::vec2(2.0, -2.0), egui::vec2(10.0, 9.0));
+            ui.painter().rect_stroke(back, Rounding::same(1.0), stroke);
+            let front = egui::Rect::from_center_size(center + egui::vec2(-2.0, 2.0), egui::vec2(10.0, 9.0));
+            ui.painter().line_segment([front.left_bottom(), front.left_top()], stroke);
+            ui.painter().line_segment([front.left_bottom(), front.right_bottom()], stroke);
+            ui.painter().line_segment([front.left_top(), front.right_top()], stroke);
+        }
+        _ => {
+            ui.painter().line_segment([center + egui::vec2(-5.0, -5.0), center + egui::vec2(5.0, 5.0)],
+                Stroke::new(1.8, icon));
+            ui.painter().line_segment([center + egui::vec2(-5.0, 5.0), center + egui::vec2(5.0, -5.0)],
+                Stroke::new(1.8, icon));
+        }
     };
-    let fill = Color32::from_rgb(
-        channel(base.0, hover.0),
-        channel(base.1, hover.1),
-        channel(base.2, hover.2),
-    );
-    ui.painter().rect_filled(rect, Rounding::same(8.0), fill);
-    ui.painter().rect_stroke(
-        rect,
-        Rounding::same(8.0),
-        Stroke::new(1.0, Color32::from_rgb(58, 68, 78)),
-    );
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        glyph,
-        FontId::proportional(if close { 20.0 } else { 15.0 }),
-        Color32::from_rgb(239, 244, 244),
-    );
     response.on_hover_text(match name {
         "minimize" => "Свернуть",
-        "maximize" => "Развернуть / восстановить",
+        "maximize" | "restore" => "Развернуть / восстановить",
         _ => "Закрыть",
     })
 }
@@ -2698,7 +2826,7 @@ fn handle_window_resize(ctx: &egui::Context) {
     if !pressed || maximized { return; }
     let Some(pointer) = pointer else { return; };
     let bounds = ctx.screen_rect();
-    let edge = 7.0;
+    let edge = 9.0;
     let left = pointer.x <= bounds.left() + edge;
     let right = pointer.x >= bounds.right() - edge;
     let top = pointer.y <= bounds.top() + edge;
@@ -2745,7 +2873,7 @@ impl eframe::App for MintyApp {
         }
         self.top_navigation(ctx);
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(20.0, 16.0)))
+            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(18.0, 14.0)))
             .show(ctx, |ui| {
                 egui::TopBottomPanel::bottom("status_footer")
                     .frame(egui::Frame::none().fill(BG))
@@ -2812,6 +2940,13 @@ fn scan_installed_profiles(game_dir: &std::path::Path) -> Vec<InstalledProfile> 
     }
     result.sort_by(|a,b| b.id.cmp(&a.id));
     result
+}
+
+fn format_compact(value: u64) -> String {
+    if value >= 1_000_000_000 { format!("{:.1} млрд.", value as f64 / 1_000_000_000.0) }
+    else if value >= 1_000_000 { format!("{:.1} млн.", value as f64 / 1_000_000.0) }
+    else if value >= 1_000 { format!("{:.1} тыс.", value as f64 / 1_000.0) }
+    else { value.to_string() }
 }
 
 fn skin_region_rects(region:&str)->Vec<(usize,usize,usize,usize)>{
