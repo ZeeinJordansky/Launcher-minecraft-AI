@@ -127,6 +127,9 @@ pub struct MintyApp {
     page_transition_started: Instant,
     mod_issues: Vec<mods::ModIssue>,
     crash_report: Option<String>,
+    benchmark_rx: Option<Receiver<system_info::BenchmarkResult>>,
+    benchmark_result: Option<system_info::BenchmarkResult>,
+    benchmark_busy: bool,
     ctx: egui::Context,
 }
 
@@ -211,6 +214,9 @@ impl MintyApp {
             page_transition_started: Instant::now(),
             mod_issues: Vec::new(),
             crash_report: None,
+            benchmark_rx: None,
+            benchmark_result: None,
+            benchmark_busy: false,
             ctx: cc.egui_ctx.clone(),
         };
         app.check_updates();
@@ -335,7 +341,27 @@ impl MintyApp {
         self.update_notice = Some("Эта версия обновления пропущена.".to_owned());
     }
 
+    fn start_benchmark(&mut self) {
+        if self.benchmark_busy { return; }
+        let (tx, rx) = unbounded();
+        self.benchmark_rx = Some(rx);
+        self.benchmark_busy = true;
+        self.benchmark_result = None;
+        let ctx = self.ctx.clone();
+        thread::spawn(move || {
+            tx.send(system_info::run_benchmark()).ok();
+            ctx.request_repaint();
+        });
+    }
+
     fn poll_background_tasks(&mut self) {
+        let benchmark_result = self.benchmark_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(result) = benchmark_result {
+            self.benchmark_rx = None;
+            self.benchmark_busy = false;
+            self.benchmark_result = Some(result);
+            self.log("Тест CPU и памяти завершён");
+        }
         if let Ok(result) = self.avatar_rx.try_recv() {
             if let Ok(avatar) = result {
                 let image = egui::ColorImage::from_rgba_unmultiplied(
@@ -2033,6 +2059,19 @@ impl MintyApp {
                         self.config.max_memory_gb = self.config.max_memory_gb.clamp(2, max);
                         ui.add(egui::Slider::new(&mut self.config.max_memory_gb, 2..=max).suffix(" ГБ"));
                     }
+                    ui.separator();
+                    if ui.add_enabled(!self.benchmark_busy, egui::Button::new(if self.benchmark_busy { "Тест выполняется…" } else { "Запустить тест CPU и памяти" })
+                        .fill(self.accent_color()).rounding(Rounding::same(8.0))).clicked() {
+                        self.start_benchmark();
+                    }
+                    if let Some(result) = &self.benchmark_result {
+                        ui.label(RichText::new(format!("CPU: {} млн. операций/с · {} потоков", result.cpu_operations_per_second / 1_000_000, result.logical_threads))
+                            .strong().color(self.accent_color()));
+                        ui.label(RichText::new(format!("Память: {} МБ/с · время теста: {} мс", result.memory_mb_per_second, result.elapsed_ms))
+                            .size(10.0).color(MUTED));
+                        ui.label(RichText::new("Это синтетический тест CPU/памяти, а не прогноз FPS Minecraft.")
+                            .size(9.0).color(MUTED));
+                    }
                     ui.checkbox(&mut self.config.auto_graphics_profile, "Автоматический профиль графики");
                     ui.checkbox(&mut self.config.weak_pc_mode, "Режим «Слабый ПК»");
                     ui.label(RichText::new("Режим оптимизирует поддерживаемые параметры options.txt. FPS также зависит от видеокарты, драйвера, мира и модов.")
@@ -2296,7 +2335,7 @@ impl eframe::App for MintyApp {
                 if transition < 1.0 { ctx.request_repaint_after(Duration::from_millis(16)); }
             });
         if self.auth_busy || self.launch_busy || self.install_busy || self.version_rx.is_some()
-            || self.update_checking || self.update_downloading || self.mod_searching || self.mod_installing {
+            || self.update_checking || self.update_downloading || self.mod_searching || self.mod_installing || self.benchmark_busy {
             let interval = if self.config.weak_pc_mode { 500 } else { 180 };
             ctx.request_repaint_after(Duration::from_millis(interval));
         }
