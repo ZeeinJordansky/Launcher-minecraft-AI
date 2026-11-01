@@ -262,7 +262,7 @@ mod instance_tests {
         fs::write(root.join("options.txt"), b"renderDistance:12\n").unwrap();
 
         let target = prepare_instance_dir(&config).unwrap();
-        assert_eq!(fs::read(target.join("saves/World/level.dat")).unwrap(), b"world");
+        assert_eq!(fs::read(target.join("saves/World/level.dat")).unwrap(), b"world".to_vec());
         assert_eq!(fs::read(target.join("options.txt")).unwrap(), b"renderDistance:12\n");
 
         fs::write(target.join("options.txt"), b"renderDistance:8\n").unwrap();
