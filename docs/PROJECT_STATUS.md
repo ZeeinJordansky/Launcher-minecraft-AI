@@ -1,3 +1,20 @@
-# Project status
+# Статус проекта Minty Launcher
 
-The initial repository commit contains the project landing page. The full Rust/Java source tree and build workflows are being prepared separately. A Windows executable must be built by the Windows GitHub Actions runner before it can be published as a release asset.
+Последнее обновление: 2026-11-01.
+
+## В репозитории
+
+- Полный исходный пакет Rust + Java: [Minty-Launcher-source.zip](../Minty-Launcher-source.zip).
+- Windows CI: `.github/workflows/ci.yml`.
+- Автоматическая сборка GitHub Release по тегам `v*`: `.github/workflows/release.yml`.
+- Документация по архитектуре, сборке, авторизации и устранению неполадок находится внутри исходного архива в каталоге `minty-launcher/docs`.
+
+## Состояние сборки
+
+Исходники и workflow добавлены в репозиторий. Успешная компиляция Windows runner'ом пока не подтверждена в этом статус-файле. Проверяй вкладку Actions для результата CI.
+
+Готовый `MintyLauncher.exe` появится в Releases после успешного запуска release workflow по тегу вида `v0.1.0`. До этого момента не следует считать бинарник опубликованным.
+
+## Ограничения текущей версии
+
+Поддерживается Vanilla Minecraft Java Edition. Загрузка Fabric, Forge и NeoForge, менеджер модов и проверка сторонних модификаций на читы не реализованы. Проверка SHA-1 применяется к официальным файлам, для которых Mojang предоставляет контрольную сумму.
