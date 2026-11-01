@@ -47,23 +47,16 @@ fn run() -> Result<(), String> {
         height: icon_height,
     });
 
-    match eframe::run_native(
+    eframe::run_native(
         "Minty Launcher",
-        native_options(window_icon.clone(), eframe::Renderer::Glow),
+        native_options(window_icon, eframe::Renderer::Glow),
         Box::new(|cc| Ok(Box::new(app::MintyApp::new(cc)))),
-    ) {
-        Ok(()) => Ok(()),
-        Err(glow_error) => {
-            let fallback = format!("OpenGL не удалось инициализировать: {glow_error}. Пробую запасной графический режим.");
-            let _ = config::append_log(&fallback);
-            eframe::run_native(
-                "Minty Launcher",
-                native_options(window_icon, eframe::Renderer::Wgpu),
-                Box::new(|cc| Ok(Box::new(app::MintyApp::new(cc)))),
-            )
-            .map_err(|wgpu_error| format!("{fallback}\nЗапасной режим также не запустился: {wgpu_error}. Проверь драйвер видеокарты."))
-        }
-    }
+    )
+    .map_err(|error| {
+        format!(
+            "Не удалось открыть окно Minty Launcher: {error}.\\n\\nПроверь, что установлен драйвер видеокарты и поддерживается OpenGL 3.2 или новее."
+        )
+    })
 }
 
 fn native_options(icon: Arc<eframe::egui::IconData>, renderer: eframe::Renderer) -> eframe::NativeOptions {
