@@ -26,3 +26,8 @@
 4. Анализ модов читает JAR metadata и не запускает мод-код.
 5. Crash Reporter формирует эвристические подсказки, а не полную экспертную атрибуцию вылета.
 6. Запуск Java пока не ограничивается AppContainer/restricted token. Поэтому это не песочница для непроверенных модов.
+
+
+## Skin Workshop and catalogue
+Skin Workshop edits a full 64×64 RGBA UV atlas with region shortcuts, brush, eraser, flood fill, eyedropper, brush size, horizontal mirror, zoom, palette, undo/redo and local PNG import/export. The preview is a 2D front-facing UV-derived composite, not a fully rigged 3D viewer.
+Modrinth search accepts a project-type facet and sort order. Only mod projects are installed as JARs; modpacks, resource packs and shaders have different import/install formats and currently open their source project page. CurseForge discovery links to its official catalogue; direct API installs require a developer key.

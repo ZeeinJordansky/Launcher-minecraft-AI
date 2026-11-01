@@ -113,7 +113,9 @@ pub fn prepare_instance_dir(config: &AppConfig) -> Result<PathBuf> {
     ] {
         let source = config.game_dir.join(name);
         let destination = target.join(name);
-        if source.is_dir() && !destination.exists() {
+        // Merge missing files even when the profile folder was created earlier by
+        // the mod manager; existing profile files are never overwritten.
+        if source.is_dir() {
             copy_instance_directory(&source, &destination)?;
         }
     }

@@ -72,8 +72,6 @@ Crash Reporter: human-readable hints for common Java, memory, mod-loader and Ope
 Bedrock Edition: launch installed Stable or Preview channels and import .mcpack/.mcaddon/.mcworld files. Microsoft Store remains authoritative for exact Bedrock build and downgrade operations.
 
 Security and accuracy notice: the current release does not claim to sandbox arbitrary third-party Java mods or predict exact FPS. Run mods only from trusted sources. The executable is not Authenticode-signed; Windows SmartScreen may show an unknown-publisher warning.
-
-            The executable is not Authenticode-signed; Windows SmartScreen may show an unknown-publisher warning.
           generate_release_notes: true
           files: |
             dist/MintyLauncher-Setup.exe
