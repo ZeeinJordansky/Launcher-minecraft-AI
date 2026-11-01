@@ -142,6 +142,9 @@ fn copy_instance_directory(source: &std::path::Path, destination: &std::path::Pa
         }
         if metadata.is_dir() {
             if !target_path.exists() {
+                fs::create_dir_all(&target_path)?;
+            }
+            if target_path.is_dir() {
                 copy_instance_directory(&source_path, &target_path)?;
             }
         } else if metadata.is_file() && !target_path.exists() {
