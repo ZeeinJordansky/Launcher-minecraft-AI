@@ -1583,6 +1583,42 @@ impl MintyApp {
         });
     }
 
+    fn settings_hub(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(5.0);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new("СИСТЕМА").size(9.0).strong().color(self.accent_color()));
+                ui.label(RichText::new("Настройки лаунчера").size(25.0).strong().color(TEXT));
+            });
+        });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            self.settings_tab_button(ui, "Настройки", SettingsTab::General);
+            self.settings_tab_button(ui, "Журнал", SettingsTab::Journal);
+        });
+        ui.add_space(8.0);
+        match self.settings_tab {
+            SettingsTab::General => self.settings_page(ui),
+            SettingsTab::Journal => self.journal_page(ui),
+        }
+    }
+
+    fn settings_tab_button(&mut self, ui: &mut egui::Ui, label: &str, tab: SettingsTab) {
+        let selected = self.settings_tab == tab;
+        let response = ui.add_sized([116.0, 36.0],
+            egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
+                .fill(if selected { PANEL_LIGHT } else { Color32::TRANSPARENT })
+                .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
+                .rounding(Rounding::same(9.0)));
+        if response.clicked() { self.settings_tab = tab; }
+        if selected {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(response.rect.left_bottom() - egui::vec2(0.0, 2.0),
+                    egui::vec2(response.rect.width(), 2.0)),
+                Rounding::same(1.0), self.accent_color());
+        }
+    }
+
     fn settings_page(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(7.0);
@@ -1593,6 +1629,21 @@ impl MintyApp {
 
             egui::Frame::none().fill(PANEL).rounding(Rounding::same(16.0))
                 .inner_margin(egui::Margin::same(17.0)).show(ui, |ui| {
+                    ui.label(RichText::new("АКЦЕНТНЫЙ ЦВЕТ").size(9.0).strong().color(MUTED));
+                    ui.horizontal(|ui| {
+                        let mut accent = self.accent_color();
+                        if ui.color_edit_button_srgba(&mut accent).changed() {
+                            self.config.accent_color = [accent.r(), accent.g(), accent.b()];
+                            configure_style(ui.ctx(), accent);
+                        }
+                        ui.label(RichText::new(format!("#{:02X}{:02X}{:02X}", self.config.accent_color[0],
+                            self.config.accent_color[1], self.config.accent_color[2])).monospace().color(TEXT));
+                        if ui.small_button("Minty по умолчанию").clicked() {
+                            self.config.accent_color = [145, 226, 183];
+                            configure_style(ui.ctx(), self.accent_color());
+                        }
+                    });
+                    ui.add_space(13.0);
                     ui.label(RichText::new("ПАПКА MINECRAFT").size(9.0).strong().color(MUTED));
                     ui.add_space(7.0);
                     ui.horizontal(|ui| {
@@ -1732,8 +1783,38 @@ impl MintyApp {
             });
         }
         if let Some(error) = &self.error {
-            ui.add_space(4.0);
-            ui.label(RichText::new(error).size(10.0).color(RED));
+            ui.add_space(5.0);
+            let lower = error.to_ascii_lowercase();
+            let (heading, hint) = if lower.contains("win32 error 5") || lower.contains("os error 5")
+                || lower.contains("отказано в доступе") {
+                ("Отказано в доступе", "Windows заблокировал запуск файла или запись в папку. Проверь права на java.exe и каталог игры; не размещай .minecraft в Program Files и проверь карантин антивируса.")
+            } else if lower.contains("minecraft java edition") && lower.contains("лиценз") {
+                ("Не найдена лицензия Minecraft Java", "Войди в Microsoft-аккаунт, на котором куплена Java Edition. Офлайн-профиль подходит только для одиночной игры.")
+            } else if lower.contains("java runtime") || lower.contains("java не найдена") {
+                ("Проблема с Java", "Minty не нашёл подходящую Java. Проверь интернет или укажи корректный java.exe в настройках.")
+            } else if lower.contains("не удалось загрузить") || lower.contains("timed out") || lower.contains("connection") {
+                ("Ошибка загрузки", "Проверь соединение, свободное место на диске и доступ к серверам Mojang/Modrinth.")
+            } else if lower.contains("поврежд") || lower.contains("checksum") || lower.contains("контрольная сумма") {
+                ("Файл повреждён", "Загрузка не прошла проверку целостности. Повтори загрузку; повреждённый файл не был принят.")
+            } else if lower.contains("отменён") {
+                ("Запуск отменён", "Подготовка игры остановлена по твоему запросу. Уже загруженные файлы останутся на диске.")
+            } else {
+                ("Не удалось выполнить действие", "Открой подробности ниже. Полный текст ошибки можно скопировать и отправить в поддержку.")
+            };
+            egui::Frame::none().fill(Color32::from_rgb(55, 35, 38))
+                .rounding(Rounding::same(10.0)).inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(heading).strong().color(RED));
+                    ui.label(RichText::new(hint).size(10.0).color(TEXT));
+                    egui::CollapsingHeader::new("Подробности ошибки")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(error).monospace().size(9.0).color(MUTED));
+                            if ui.small_button("Копировать текст ошибки").clicked() {
+                                ui.output_mut(|output| output.copied_text = error.clone());
+                            }
+                        });
+                });
         }
     }
 }
@@ -1741,7 +1822,7 @@ impl MintyApp {
 impl eframe::App for MintyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_events();
-        self.sidebar(ctx);
+        self.top_navigation(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::same(21.0)))
             .show(ctx, |ui| {
@@ -1750,14 +1831,12 @@ impl eframe::App for MintyApp {
                     .show_inside(ui, |ui| self.footer(ui));
                 match self.page {
                     Page::Home => self.home_page(ui),
-                    Page::Installations => self.installations_page(ui),
-                    Page::Skin => self.skin_page(ui),
-                    Page::Journal => self.journal_page(ui),
-                    Page::Settings => self.settings_page(ui),
+                    Page::Minecraft => self.minecraft_page(ui),
+                    Page::Settings => self.settings_hub(ui),
                 }
             });
         if self.auth_busy || self.launch_busy || self.install_busy || self.version_rx.is_some()
-            || self.update_checking || self.update_downloading {
+            || self.update_checking || self.update_downloading || self.mod_searching || self.mod_installing {
             let interval = if self.config.weak_pc_mode { 500 } else { 180 };
             ctx.request_repaint_after(Duration::from_millis(interval));
         }
@@ -1774,21 +1853,25 @@ impl eframe::App for MintyApp {
     }
 }
 
-fn configure_style(ctx: &egui::Context) {
+fn configure_style(ctx: &egui::Context, accent: Color32) {
     let mut style = (*ctx.style()).clone();
     style.visuals = egui::Visuals::dark();
     style.visuals.panel_fill = BG;
     style.visuals.window_fill = PANEL;
     style.visuals.extreme_bg_color = Color32::from_rgb(10, 14, 19);
     style.visuals.faint_bg_color = PANEL;
-    style.visuals.selection.bg_fill = MINT_DARK;
+    style.visuals.selection.bg_fill = accent;
     style.visuals.widgets.noninteractive.bg_fill = PANEL;
     style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
     style.visuals.widgets.inactive.bg_fill = PANEL_LIGHT;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(52, 68, 78);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(
+        accent.r().saturating_add(12).min(255),
+        accent.g().saturating_add(12).min(255),
+        accent.b().saturating_add(12).min(255),
+    );
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    style.visuals.widgets.active.bg_fill = MINT_DARK;
+    style.visuals.widgets.active.bg_fill = accent;
     style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
     style.visuals.window_rounding = Rounding::same(16.0);
     style.visuals.menu_rounding = Rounding::same(10.0);
