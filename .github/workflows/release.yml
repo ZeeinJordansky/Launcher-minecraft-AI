@@ -2,7 +2,8 @@ name: Minty Launcher - Windows Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -17,37 +18,50 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      - name: Run Rust tests
+        working-directory: minty-launcher
+        run: cargo test --all-targets --target x86_64-pc-windows-msvc
+
       - name: Build x64 application
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
+
       - name: Verify application PE
         shell: bash
         run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
+
       - name: Stage application
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/minty-launcher.exe
+
       - name: Install Pillow
         run: python -m pip install --disable-pip-version-check Pillow
+
       - name: Generate setup icon
         run: python scripts/installer/build_icon.py
+
       - name: Install Inno Setup
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (!(Test-Path $iscc)) { choco install innosetup --no-progress -y }
           if (!(Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+
       - name: Compile setup wizard
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "/DAppVersion=0.4.0" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
+
       - name: Verify installer and application
         shell: pwsh
         run: |
@@ -55,6 +69,7 @@ jobs:
           if ((Get-Item dist/MintyLauncher-Setup.exe).Length -lt 1000000) { throw "Setup is unexpectedly small." }
           Get-FileHash dist/minty-launcher.exe -Algorithm SHA256
           Get-FileHash dist/MintyLauncher-Setup.exe -Algorithm SHA256
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -63,15 +78,25 @@ jobs:
           body: |
             Minty Launcher v0.4.0 for Windows 10/11 x64.
 
-Russian-first interface with staged startup, installed-profile-only launch selection, right-aligned account avatar, centered status line and animated page transitions.
+            Русскоязычный интерфейс, этапный splash screen, библиотека только установленных профилей,
+            аватар справа, центрированный статус, анимации переходов и разделённые настройки.
 
-Java Edition: isolated per-profile game data, Modrinth browse catalogue and search, static JAR metadata diagnostics, JVM garbage collector selector and optional fullscreen launch.
+            Java Edition: изоляция миров, модов и настроек по профилям, выбор Java и GC,
+            полноэкранный запуск, каталог Modrinth с категориями и сортировкой, установка JAR-модов,
+            статическая проверка метаданных и Crash Reporter.
 
-Crash Reporter: human-readable hints for common Java, memory, mod-loader and OpenGL failures. Weak-PC mode continues to back up and restore options.txt.
+            Skin Workshop: UV-атлас 64×64, кисть, ластик, заливка, пипетка, палитра,
+            зеркальное рисование, история отмены/повтора, импорт и экспорт PNG.
 
-Bedrock Edition: launch installed Stable or Preview channels and import .mcpack/.mcaddon/.mcworld files. Microsoft Store remains authoritative for exact Bedrock build and downgrade operations.
+            Производительность: замер CPU и пропускной способности памяти, а также режим «Слабый ПК».
+            Замер не выдаёт выдуманный прогноз FPS.
 
-Security and accuracy notice: the current release does not claim to sandbox arbitrary third-party Java mods or predict exact FPS. Run mods only from trusted sources. The executable is not Authenticode-signed; Windows SmartScreen may show an unknown-publisher warning.
+            Bedrock: запуск установленного Stable/Preview и импорт .mcpack/.mcaddon/.mcworld.
+            Точную версию Bedrock контролирует Microsoft Store.
+
+            Ограничения: CurseForge API требует ключ; AppContainer-песочница и загрузка скинов
+            в Microsoft/Ely.by пока не реализованы. Не запускайте непроверенные моды.
+            EXE не подписан Authenticode и может вызвать предупреждение SmartScreen.
           generate_release_notes: true
           files: |
             dist/MintyLauncher-Setup.exe
