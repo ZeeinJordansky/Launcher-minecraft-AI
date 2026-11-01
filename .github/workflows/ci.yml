@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=0.2.0" "scripts/installer/MintySetup.iss"
+          & $iscc "/DAppVersion=0.4.0" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
       - name: Verify installer and application
         shell: pwsh
@@ -63,7 +63,7 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: minty-launcher-windows-x64-v0.2.0
+          name: minty-launcher-windows-x64-v0.4.0
           path: |
             dist/minty-launcher.exe
             dist/MintyLauncher-Setup.exe
