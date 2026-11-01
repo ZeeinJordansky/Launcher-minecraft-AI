@@ -413,6 +413,27 @@ impl MintyApp {
         self.log(self.mod_status.clone());
     }
 
+    fn import_bedrock_files(&mut self) {
+        let Some(files) = rfd::FileDialog::new()
+            .add_filter("Bedrock packages", &["mcpack", "mcaddon", "mcworld"])
+            .set_title("Импортировать дополнение Bedrock")
+            .pick_files() else { return; };
+        let mut imported = 0usize;
+        let mut errors = Vec::new();
+        for path in files {
+            match bedrock::import_addon(&path) {
+                Ok(()) => imported += 1,
+                Err(error) => errors.push(format!("{}: {error:#}", path.display())),
+            }
+        }
+        self.mod_status = if errors.is_empty() {
+            format!("Minecraft получил файлов для импорта: {imported}. Подтверждение появится в Bedrock.")
+        } else {
+            format!("Импортировано: {imported}. Ошибки: {}", errors.join(" | "))
+        };
+        self.log(self.mod_status.clone());
+    }
+
     fn open_java_mods_folder(&self) {
         let path = self.config.game_dir.join("mods");
         let _ = std::fs::create_dir_all(&path);
@@ -1240,16 +1261,10 @@ impl MintyApp {
                         let mut requested = None;
                         for project in projects {
                             ui.horizontal(|ui| {
-                                if let Some(icon_url) = &project.icon_url {
-                                    let response = ui.add(egui::Image::new(egui::ImageSource::Uri(icon_url.clone().into()))
-                                        .fit_to_exact_size(egui::vec2(42.0, 42.0)));
-                                    if !response.clicked() { /* icon is intentionally non-interactive */ }
-                                } else {
-                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(rect, Rounding::same(9.0), PANEL_LIGHT);
-                                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "M",
-                                        FontId::proportional(22.0), self.accent_color());
-                                }
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
+                                ui.painter().rect_filled(rect, Rounding::same(9.0), PANEL_LIGHT);
+                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "M",
+                                    FontId::proportional(22.0), self.accent_color());
                                 ui.add_space(6.0);
                                 ui.vertical(|ui| {
                                     ui.label(RichText::new(&project.title).strong().color(TEXT).size(13.0));
@@ -1305,7 +1320,7 @@ impl MintyApp {
                         if ui.button("Открыть Microsoft Store").clicked() {
                             if let Err(error) = bedrock::open_store_search() { self.error = Some(format!("{error:#}")); }
                         }
-                        if ui.button("Импортировать дополнение").clicked() { self.import_game_files(); }
+                        if ui.button("Импортировать дополнение").clicked() { self.import_bedrock_files(); }
                     });
                 });
             ui.add_space(12.0);
@@ -1330,6 +1345,16 @@ impl MintyApp {
                         ui.separator();
                     }
                 });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Открыть папку данных Bedrock").clicked() {
+                    if let Err(error) = bedrock::open_data_folder(false) { self.error = Some(format!("{error:#}")); }
+                }
+                if installations.iter().any(|item| item.channel == "Minecraft Preview")
+                    && ui.button("Открыть папку Preview").clicked() {
+                    if let Err(error) = bedrock::open_data_folder(true) { self.error = Some(format!("{error:#}")); }
+                }
+            });
             ui.add_space(12.0);
             ui.label(RichText::new("Bedrock Stable и Preview обновляются и выбираются через Microsoft Store. Minty не подменяет версии Store и не скачивает неподдерживаемые Appx-пакеты.")
                 .size(10.0).color(MUTED));
