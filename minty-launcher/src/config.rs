@@ -23,6 +23,10 @@ pub struct AppConfig {
     pub auto_memory: bool,
     pub auto_graphics_profile: bool,
     pub weak_pc_mode: bool,
+    pub launch_fullscreen: bool,
+    pub gc_algorithm: String,
+    pub isolated_profiles: bool,
+    pub bedrock_channel: String,
     pub skipped_update_version: Option<String>,
     pub accent_color: [u8; 3],
     pub last_account_name: Option<String>,
@@ -46,6 +50,10 @@ impl Default for AppConfig {
             auto_memory: true,
             auto_graphics_profile: true,
             weak_pc_mode: false,
+            launch_fullscreen: false,
+            gc_algorithm: "Авто".to_owned(),
+            isolated_profiles: false,
+            bedrock_channel: "Стабильная".to_owned(),
             skipped_update_version: None,
             accent_color: [145, 226, 183],
             last_account_name: None,
@@ -59,6 +67,29 @@ fn dirs_home() -> PathBuf {
     directories::UserDirs::new()
         .map(|d| d.home_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Returns the mutable data directory for the active game profile.
+///
+/// Shared versions, libraries, assets and natives stay in game_dir. When isolation
+/// is enabled, worlds, mods, options and resource packs live in their own folder.
+pub fn instance_dir(config: &AppConfig) -> PathBuf {
+    if !config.isolated_profiles {
+        return config.game_dir.clone();
+    }
+    let profile = if config.selected_profile_id.trim().is_empty() {
+        config.selected_version.as_str()
+    } else {
+        config.selected_profile_id.as_str()
+    };
+    let safe_name: String = profile.chars().map(|character| {
+        if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+            character
+        } else {
+            '_'
+        }
+    }).collect();
+    config.game_dir.join("instances").join(safe_name)
 }
 
 pub fn config_file() -> Result<PathBuf> {

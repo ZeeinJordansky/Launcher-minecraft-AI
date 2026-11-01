@@ -2,6 +2,7 @@
 
 mod app;
 mod bedrock;
+mod crash;
 mod mods;
 mod auth;
 mod config;

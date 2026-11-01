@@ -109,7 +109,6 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     let libraries_dir = game_dir.join("libraries");
     let assets_dir = game_dir.join("assets");
     fs::create_dir_all(&game_dir)?;
-    apply_weak_pc_profile(&game_dir, low_end_profile)?;
     for dir in [&versions_dir, &libraries_dir, &assets_dir] { fs::create_dir_all(dir)?; }
 
     check_cancelled(cancel)?;
@@ -123,6 +122,11 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     check_cancelled(cancel)?;
     let profile_id = ensure_loader_profile(config, &client, &version, &game_dir, events)?;
     check_cancelled(cancel)?;
+
+    // Mutable data belongs to an optional isolated profile; common downloads stay shared.
+    let instance_dir = crate::config::instance_dir(config);
+    fs::create_dir_all(&instance_dir)?;
+    apply_weak_pc_profile(&instance_dir, low_end_profile)?;
     let metadata = if profile_id == version {
         base_metadata.clone()
     } else {
@@ -230,7 +234,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     let mut variables = HashMap::new();
     variables.insert("auth_player_name", account.name.as_str());
     variables.insert("version_name", profile_id.as_str());
-    let game_dir_text = game_dir.to_string_lossy().to_string();
+    let game_dir_text = instance_dir.to_string_lossy().to_string();
     let assets_text = assets_dir.to_string_lossy().to_string();
     let natives_text = natives_dir.to_string_lossy().to_string();
     let classpath_text = std::env::join_paths(&classpath)?.to_string_lossy().to_string();
@@ -286,10 +290,18 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
         bail!("Формат аргументов этой версии Minecraft не поддерживается.");
     }
 
-    if low_end_profile {
-        jvm_args.push("-XX:+UseG1GC".to_owned());
+    match config.gc_algorithm.as_str() {
+        "ZGC" => jvm_args.push("-XX:+UseZGC".to_owned()),
+        "Shenandoah" => jvm_args.push("-XX:+UseShenandoahGC".to_owned()),
+        "G1GC" | "Авто" | "" => jvm_args.push("-XX:+UseG1GC".to_owned()),
+        _ => jvm_args.push("-XX:+UseG1GC".to_owned()),
+    }
+    if low_end_profile && matches!(config.gc_algorithm.as_str(), "Авто" | "G1GC" | "") {
         jvm_args.push("-XX:MaxGCPauseMillis=100".to_owned());
         jvm_args.push("-XX:+ParallelRefProcEnabled".to_owned());
+    }
+    if config.launch_fullscreen {
+        game_args.push("--fullscreen".to_owned());
     }
 
     status(events, &format!("Запускаю Minecraft {profile_id}…"));
@@ -297,7 +309,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     if !java.is_file() {
         bail!("Исполняемый файл Java не найден: {}. Укажи java.exe в настройках или переустанови Java Runtime.", java.display());
     }
-    ensure_game_directory_writable(&game_dir)?;
+    ensure_game_directory_writable(&instance_dir)?;
     let log_path = crate::config::data_dir()?.join("logs").join("minecraft.log");
     if let Some(parent) = log_path.parent() { fs::create_dir_all(parent)?; }
     let log_file = fs::OpenOptions::new().create(true).append(true).open(&log_path)
@@ -306,7 +318,7 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     check_cancelled(cancel)?;
     let mut command = Command::new(&java);
     command.args(&jvm_args).arg(main_class).args(&game_args)
-        .current_dir(&game_dir).stdin(Stdio::null())
+        .current_dir(&instance_dir).stdin(Stdio::null())
         .stdout(Stdio::from(stdout)).stderr(Stdio::from(log_file));
     let child = command.spawn().with_context(|| {
         let os_code = std::io::Error::last_os_error().raw_os_error();
