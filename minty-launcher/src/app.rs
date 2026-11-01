@@ -1289,6 +1289,43 @@ impl MintyApp {
                         if let Some(slug) = requested { self.install_store_mod(slug); }
                     });
                 });
+            ui.add_space(13.0);
+            let mods_dir = self.config.game_dir.join("mods");
+            let installed_mods: Vec<PathBuf> = std::fs::read_dir(&mods_dir)
+                .map(|entries| entries.flatten().map(|entry| entry.path())
+                    .filter(|path| path.is_file() && path.extension().and_then(|ext| ext.to_str())
+                        .map(|ext| ext.eq_ignore_ascii_case("jar")).unwrap_or(false))
+                    .collect())
+                .unwrap_or_default();
+            ui.label(RichText::new(format!("УСТАНОВЛЕННЫЕ JAVA-МОДЫ · {}", installed_mods.len()))
+                .size(9.0).strong().color(MUTED));
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0))
+                .inner_margin(egui::Margin::same(11.0)).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(175.0).show(ui, |ui| {
+                        if installed_mods.is_empty() {
+                            ui.label(RichText::new("Папка mods пока пуста. Импортируй .jar или установи мод из каталога.")
+                                .size(10.0).color(MUTED));
+                        }
+                        let mut remove_path = None;
+                        for path in &installed_mods {
+                            ui.horizontal(|ui| {
+                                let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("mod.jar");
+                                ui.label(RichText::new("◆").color(self.accent_color()));
+                                ui.label(RichText::new(name).size(10.0).color(TEXT));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.small_button("Удалить").clicked() { remove_path = Some(path.clone()); }
+                                });
+                            });
+                            ui.separator();
+                        }
+                        if let Some(path) = remove_path {
+                            match std::fs::remove_file(&path) {
+                                Ok(()) => self.mod_status = format!("Мод удалён: {}", path.file_name().unwrap_or_default().to_string_lossy()),
+                                Err(error) => self.mod_status = format!("Не удалось удалить мод: {error}"),
+                            }
+                        }
+                    });
+                });
             ui.add_space(8.0);
             ui.label(RichText::new("Каталог использует публичный API Modrinth. Проверяй лицензию, описание и совместимость модов до установки.")
                 .size(9.0).color(MUTED));
