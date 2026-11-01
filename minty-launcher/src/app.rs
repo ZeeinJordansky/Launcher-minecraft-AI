@@ -524,10 +524,12 @@ impl MintyApp {
         let (tx, rx) = unbounded();
         self.mod_search_rx = Some(rx);
         self.mod_searching = true;
-        self.mod_status = if query.is_empty() {
+        self.mod_status = if category == "world" {
+            "Ищу карты и игровые миры на Modrinth…".to_owned()
+        } else if query.is_empty() {
             "Загружаю популярные проекты каталога Modrinth…".to_owned()
         } else {
-            "Ищу совместимые моды в каталоге Modrinth…".to_owned()
+            "Ищу проекты в каталоге Modrinth…".to_owned()
         };
         let ctx = self.ctx.clone();
         thread::spawn(move || {
@@ -1748,25 +1750,30 @@ impl MintyApp {
                                         row.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, mark,
                                             FontId::proportional(25.0), self.accent_color());
                                         row.add_space(5.0);
-                                        row.vertical(|details| {
-                                            details.set_min_width(details.available_width());
-                                            details.add_sized([details.available_width(), 19.0],
-                                                egui::Label::new(RichText::new(&project.title).strong().size(12.5).color(TEXT)).truncate());
-                                            details.add_sized([details.available_width(), 16.0],
-                                                egui::Label::new(RichText::new(format!("Автор: {}", if project.author.is_empty() { "сообщество" } else { project.author.as_str() }))
-                                                    .size(9.5).color(MUTED)).truncate());
-                                            details.label(RichText::new(&project.description).size(9.5).color(TEXT));
-                                            details.horizontal(|meta| {
-                                                meta.label(RichText::new(format!("Загрузки: {}", format_compact(project.downloads)))
-                                                    .size(9.0).color(self.accent_color()));
-                                                if let Some(version) = &project.latest_version {
-                                                    meta.label(RichText::new(format!("Версия проекта: {version}")).size(9.0).color(MUTED));
-                                                }
-                                                if !project.project_type.is_empty() {
-                                                    meta.label(RichText::new(project.project_type.to_uppercase()).size(8.5).color(MUTED));
-                                                }
-                                            });
-                                        });
+                                        let details_width = (row.available_width() - 190.0).max(90.0);
+                                        row.allocate_ui_with_layout(
+                                            egui::vec2(details_width, 58.0),
+                                            Layout::top_down(Align::Min),
+                                            |details| {
+                                                details.set_min_width(details_width);
+                                                details.add_sized([details_width, 19.0],
+                                                    egui::Label::new(RichText::new(&project.title).strong().size(12.5).color(TEXT)).truncate());
+                                                details.add_sized([details_width, 16.0],
+                                                    egui::Label::new(RichText::new(format!("Автор: {}", if project.author.is_empty() { "сообщество" } else { project.author.as_str() }))
+                                                        .size(9.5).color(MUTED)).truncate());
+                                                details.label(RichText::new(&project.description).size(9.5).color(TEXT));
+                                                details.horizontal(|meta| {
+                                                    meta.label(RichText::new(format!("Загрузки: {}", format_compact(project.downloads)))
+                                                        .size(9.0).color(self.accent_color()));
+                                                    if let Some(version) = &project.latest_version {
+                                                        meta.label(RichText::new(format!("Версия проекта: {version}")).size(9.0).color(MUTED));
+                                                    }
+                                                    if !project.project_type.is_empty() {
+                                                        meta.label(RichText::new(project.project_type.to_uppercase()).size(8.5).color(MUTED));
+                                                    }
+                                                });
+                                            },
+                                        );
                                         row.with_layout(Layout::right_to_left(Align::Center), |actions| {
                                             let open_only = self.mod_category == "modpack";
                                             let label = if open_only { "Открыть ↗" } else if self.mod_installing { "Установка…" }
