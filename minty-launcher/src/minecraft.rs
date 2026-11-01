@@ -84,7 +84,7 @@ pub fn launch(config: AppConfig, account: Account, events: Sender<LaunchEvent>, 
             events.send(LaunchEvent::Finished("Minecraft запущен. Лаунчер можно оставить открытым.".to_owned())).ok();
             Ok(())
         }
-        Err(error) if cancel.load(Ordering::Relaxed) => {
+        Err(_error) if cancel.load(Ordering::Relaxed) => {
             events.send(LaunchEvent::Cancelled).ok();
             Ok(())
         }

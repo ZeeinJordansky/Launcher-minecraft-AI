@@ -1371,6 +1371,7 @@ impl MintyApp {
             ui.add_space(12.0);
             ui.label(RichText::new("НАЙДЕННЫЕ ДАННЫЕ BEDROCK").size(9.0).strong().color(MUTED));
             let installations = bedrock::installations();
+            let has_preview = installations.iter().any(|item| item.channel == "Minecraft Preview");
             egui::Frame::none().fill(PANEL).rounding(Rounding::same(14.0))
                 .inner_margin(egui::Margin::same(13.0)).show(ui, |ui| {
                     if installations.is_empty() {
@@ -1395,8 +1396,7 @@ impl MintyApp {
                 if ui.button("Открыть папку данных Bedrock").clicked() {
                     if let Err(error) = bedrock::open_data_folder(false) { self.error = Some(format!("{error:#}")); }
                 }
-                if installations.iter().any(|item| item.channel == "Minecraft Preview")
-                    && ui.button("Открыть папку Preview").clicked() {
+                if has_preview && ui.button("Открыть папку Preview").clicked() {
                     if let Err(error) = bedrock::open_data_folder(true) { self.error = Some(format!("{error:#}")); }
                 }
             });
