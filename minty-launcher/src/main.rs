@@ -6,12 +6,22 @@ mod config;
 mod minecraft;
 mod runtime;
 mod skin;
+mod system_info;
+mod updater;
 
 use std::sync::Arc;
 
 const APP_MUTEX: &str = "Local\\MintyLauncherAppMutex";
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--apply-update") {
+        if let Err(error) = updater::run_helper(&args) {
+            show_message_box(&format!("Не удалось применить обновление Minty Launcher:\n\n{error}"), true);
+        }
+        return;
+    }
+
     std::panic::set_hook(Box::new(|info| {
         let message = format!("Minty Launcher неожиданно завершился: {info}");
         let _ = config::append_log(&message);

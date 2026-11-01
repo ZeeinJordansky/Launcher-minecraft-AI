@@ -1,4 +1,4 @@
-use crate::{auth::Account, config::AppConfig, runtime};
+use crate::{auth::Account, config::AppConfig, runtime, system_info};
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::Sender;
 use rayon::prelude::*;
@@ -91,12 +91,14 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     } else { config.selected_version.clone() };
     validate_version_id(&version)?;
 
+    let hardware = system_info::detect();
+    let low_end_profile = config.weak_pc_mode || (config.auto_graphics_profile && hardware.low_end);
     let game_dir = config.game_dir.clone();
     let versions_dir = game_dir.join("versions").join(&version);
     let libraries_dir = game_dir.join("libraries");
     let assets_dir = game_dir.join("assets");
     fs::create_dir_all(&game_dir)?;
-    apply_weak_pc_profile(&game_dir, config.weak_pc_mode)?;
+    apply_weak_pc_profile(&game_dir, low_end_profile)?;
     for dir in [&versions_dir, &libraries_dir, &assets_dir] { fs::create_dir_all(dir)?; }
 
     status(events, &format!("Получаю метаданные Minecraft {version}…"));
@@ -235,12 +237,12 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     variables.insert("launcher_version", env!("CARGO_PKG_VERSION"));
 
     let mut jvm_args = Vec::new();
-    let max_memory_gb = if config.weak_pc_mode {
-        2
+    let max_memory_gb = if config.auto_memory {
+        hardware.recommended_memory_gb
     } else {
-        config.max_memory_gb.clamp(2, 16)
+        config.max_memory_gb.clamp(2, hardware.recommended_memory_gb.max(2))
     };
-    jvm_args.push(if config.weak_pc_mode { "-Xms512M".to_owned() } else { "-Xms1G".to_owned() });
+    jvm_args.push(if low_end_profile { "-Xms512M".to_owned() } else { "-Xms1G".to_owned() });
     jvm_args.push(format!("-Xmx{max_memory_gb}G"));
     if let Some(jvm) = metadata["arguments"]["jvm"].as_array() {
         jvm_args.extend(parse_arguments(jvm, &variables)?);
@@ -260,13 +262,18 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
         bail!("Формат аргументов этой версии Minecraft не поддерживается.");
     }
 
-    if config.weak_pc_mode {
+    if low_end_profile {
         jvm_args.push("-XX:+UseG1GC".to_owned());
         jvm_args.push("-XX:MaxGCPauseMillis=100".to_owned());
         jvm_args.push("-XX:+ParallelRefProcEnabled".to_owned());
     }
 
     status(events, &format!("Запускаю Minecraft {profile_id}…"));
+    let java = runtime::resolve_launch_executable(&java);
+    if !java.is_file() {
+        bail!("Исполняемый файл Java не найден: {}. Укажи java.exe в настройках или переустанови Java Runtime.", java.display());
+    }
+    ensure_game_directory_writable(&game_dir)?;
     let log_path = crate::config::data_dir()?.join("logs").join("minecraft.log");
     if let Some(parent) = log_path.parent() { fs::create_dir_all(parent)?; }
     let log_file = fs::OpenOptions::new().create(true).append(true).open(&log_path)
@@ -276,7 +283,17 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     command.args(&jvm_args).arg(main_class).args(&game_args)
         .current_dir(&game_dir).stdin(Stdio::null())
         .stdout(Stdio::from(stdout)).stderr(Stdio::from(log_file));
-    let game_status = command.status().with_context(|| format!("Не удалось запустить Minecraft через {}", java.display()))?;
+    let game_status = command.status().with_context(|| {
+        let os_code = std::io::Error::last_os_error().raw_os_error();
+        if os_code == Some(5) {
+            format!(
+                "Windows вернул «Отказано в доступе» (Win32 error 5) при запуске Java.\nJava: {}\nПапка игры: {}\n\nMinty использует java.exe вместо javaw.exe. Проверь права доступа к этим путям и исключения антивируса.",
+                java.display(), game_dir.display()
+            )
+        } else {
+            format!("Не удалось запустить Minecraft через {} (Win32 error {:?})", java.display(), os_code)
+        }
+    })?;
     if !game_status.success() {
         status(events, &format!("Minecraft завершился с кодом {:?}. Журнал: {}", game_status.code(), log_path.display()));
     }
@@ -353,6 +370,17 @@ fn apply_weak_pc_profile(game_dir: &Path, enabled: bool) -> Result<()> {
         fs::remove_file(&options)?;
     }
     fs::rename(temp, options)?;
+    Ok(())
+}
+
+fn ensure_game_directory_writable(game_dir: &Path) -> Result<()> {
+    fs::create_dir_all(game_dir)
+        .with_context(|| format!("Не удалось создать папку игры: {}", game_dir.display()))?;
+    let probe = game_dir.join(format!(".minty-access-check-{}.tmp", std::process::id()));
+    fs::write(&probe, b"minty")
+        .with_context(|| format!("Нет прав на запись в папку Minecraft: {}", game_dir.display()))?;
+    fs::remove_file(&probe)
+        .with_context(|| format!("Не удалось удалить временный файл проверки из {}", game_dir.display()))?;
     Ok(())
 }
 

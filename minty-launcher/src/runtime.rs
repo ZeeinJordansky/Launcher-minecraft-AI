@@ -22,7 +22,7 @@ struct AdoptiumPackage {
 
 pub fn ensure_java(required_major: u32, custom_path: &str, runtime_root: &Path) -> Result<PathBuf> {
     if !custom_path.trim().is_empty() {
-        let custom = PathBuf::from(custom_path.trim());
+        let custom = normalize_java_executable(PathBuf::from(custom_path.trim()));
         if custom.is_file() {
             if java_major(&custom).map(|m| m >= required_major).unwrap_or(false) {
                 return Ok(custom);
@@ -159,21 +159,41 @@ fn extract_zip_safely(archive_path: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn resolve_launch_executable(path: &Path) -> PathBuf {
+    normalize_java_executable(path.to_path_buf())
+}
+
+fn normalize_java_executable(path: PathBuf) -> PathBuf {
+    if path.is_dir() {
+        let candidate = path.join("bin").join("java.exe");
+        if candidate.is_file() { return candidate; }
+    }
+    let is_javaw = path.file_name().and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("javaw.exe")).unwrap_or(false);
+    if is_javaw {
+        let console_java = path.with_file_name("java.exe");
+        if console_java.is_file() { return console_java; }
+    }
+    path
+}
+
 fn find_java_executable(root: &Path) -> Option<PathBuf> {
     if !root.exists() { return None; }
     let mut stack = vec![root.to_path_buf()];
+    let mut javaw_fallback = None;
     while let Some(dir) = stack.pop() {
-        let entries = fs::read_dir(dir).ok()?;
+        let entries = match fs::read_dir(dir) { Ok(entries) => entries, Err(_) => continue };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.file_name().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("javaw.exe")).unwrap_or(false) {
-                return Some(path);
+            if path.is_dir() { stack.push(path); continue; }
+            match path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+                "java.exe" => return Some(path),
+                "javaw.exe" if javaw_fallback.is_none() => javaw_fallback = Some(path),
+                _ => {}
             }
         }
     }
-    None
+    javaw_fallback.map(normalize_java_executable)
 }
 
 
