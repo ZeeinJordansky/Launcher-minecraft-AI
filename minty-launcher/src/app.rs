@@ -1049,7 +1049,8 @@ impl MintyApp {
                     let controls_width = 3.0 * 42.0 + 3.0 * 6.0 + 18.0;
                     let drag_width = (ui.available_width() - controls_width).max(90.0);
                     let (drag_rect, drag_response) = ui.allocate_exact_size(
-                        egui::vec2(drag_width, 42.0), egui::Sense::click_and_drag()
+                        // Leave 6 px at the top and bottom for native resize hit zones.
+                        egui::vec2(drag_width, 30.0), egui::Sense::click_and_drag()
                     );
                     ui.painter().circle_filled(
                         drag_rect.left_center() + egui::vec2(2.0, 0.0),
@@ -2688,9 +2689,55 @@ fn paint_hover_feedback(ui: &egui::Ui, response: &egui::Response, accent: Color3
     }
 }
 
+fn handle_window_resize(ctx: &egui::Context) {
+    let (pressed, pointer, maximized) = ctx.input(|input| (
+        input.pointer.button_pressed(egui::PointerButton::Primary),
+        input.pointer.interact_pos(),
+        input.viewport().maximized.unwrap_or(false),
+    ));
+    if !pressed || maximized { return; }
+    let Some(pointer) = pointer else { return; };
+    let bounds = ctx.screen_rect();
+    let edge = 7.0;
+    let left = pointer.x <= bounds.left() + edge;
+    let right = pointer.x >= bounds.right() - edge;
+    let top = pointer.y <= bounds.top() + edge;
+    let bottom = pointer.y >= bounds.bottom() - edge;
+    let direction = match (left, right, top, bottom) {
+        (true, _, true, _) => Some(egui::viewport::ResizeDirection::NorthWest),
+        (_, true, true, _) => Some(egui::viewport::ResizeDirection::NorthEast),
+        (true, _, _, true) => Some(egui::viewport::ResizeDirection::SouthWest),
+        (_, true, _, true) => Some(egui::viewport::ResizeDirection::SouthEast),
+        (true, _, _, _) => Some(egui::viewport::ResizeDirection::West),
+        (_, true, _, _) => Some(egui::viewport::ResizeDirection::East),
+        (_, _, true, _) => Some(egui::viewport::ResizeDirection::North),
+        (_, _, _, true) => Some(egui::viewport::ResizeDirection::South),
+        _ => None,
+    };
+    if let Some(direction) = direction {
+        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+    }
+}
+
+fn paint_resize_grip(ctx: &egui::Context) {
+    let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+    if maximized { return; }
+    let bounds = ctx.screen_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("minty_resize_grip")));
+    let color = Color32::from_rgba_unmultiplied(145, 166, 163, 120);
+    let origin = bounds.right_bottom() - egui::vec2(4.0, 4.0);
+    for offset in [0.0, 4.0, 8.0] {
+        painter.line_segment(
+            [origin - egui::vec2(12.0 + offset, 0.0), origin - egui::vec2(0.0, 12.0 + offset)],
+            Stroke::new(1.0, color),
+        );
+    }
+}
+
 impl eframe::App for MintyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_events();
+        handle_window_resize(ctx);
         self.window_titlebar(ctx);
         if self.boot_stage != BootStage::Ready {
             self.splash_screen(ctx);
@@ -2721,6 +2768,7 @@ impl eframe::App for MintyApp {
                     if transition < 1.0 { ctx.request_repaint_after(Duration::from_millis(16)); }
                 });
             });
+        paint_resize_grip(ctx);
         if self.auth_busy || self.launch_busy || self.install_busy || self.version_rx.is_some()
             || self.update_checking || self.update_downloading || self.mod_searching || self.mod_installing || self.benchmark_busy {
             let interval = if self.config.weak_pc_mode { 500 } else { 180 };
