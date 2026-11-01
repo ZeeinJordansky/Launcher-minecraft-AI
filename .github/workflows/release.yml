@@ -1,20 +1,36 @@
-name: Build and publish release
+name: Minty Launcher - Windows Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build Windows executable and publish release
+    name: Build and publish Windows executable
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Rebuild source archive from committed parts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          parts = sorted(Path("source-parts").glob("part-*.txt"))
+          if len(parts) != 12:
+              raise SystemExit(f"Expected 12 source parts, found {len(parts)}")
+          encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
+          Path("Minty-Launcher-source.tar.xz").write_bytes(base64.b64decode(encoded, validate=True))
+          PY
+
+      - name: Extract source archive
+        run: tar -xf Minty-Launcher-source.tar.xz
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -27,20 +43,33 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Extract source archive
-        run: python -m zipfile -e Minty-Launcher-source.zip build-source
+      - name: Run tests before release
+        working-directory: minty-launcher
+        run: cargo test --all-targets --target x86_64-pc-windows-msvc
 
-      - name: Build
-        working-directory: build-source/minty-launcher
+      - name: Build Windows x64 executable
+        working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Prepare release asset
-        run: copy /Y build-source\minty-launcher\target\x86_64-pc-windows-msvc\release\minty-launcher.exe MintyLauncher.exe
-        shell: cmd
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/MintyLauncher.exe
+          cp Minty-Launcher-source.tar.xz dist/Minty-Launcher-source.tar.xz
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Minty Launcher ${{ github.ref_name }}
+          tag_name: v0.1.${{ github.run_number }}
+          name: Minty Launcher v0.1.${{ github.run_number }}
+          body: |
+            Minty Launcher for Windows 10/11 x64.
+
+            Download MintyLauncher.exe below. The executable was compiled on a Windows runner after the test suite passed.
           generate_release_notes: true
-          files: MintyLauncher.exe
+          files: |
+            dist/MintyLauncher.exe
+            dist/Minty-Launcher-source.tar.xz
+          fail_on_unmatched_files: true
+          make_latest: true

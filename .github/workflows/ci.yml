@@ -1,9 +1,10 @@
-name: Windows CI
+name: Minty Launcher - Windows CI
 
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,11 +12,27 @@ permissions:
 
 jobs:
   build:
-    name: Build Minty Launcher (Windows x64)
+    name: Windows x64 tests and build
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Rebuild source archive from committed parts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          parts = sorted(Path("source-parts").glob("part-*.txt"))
+          if len(parts) != 12:
+              raise SystemExit(f"Expected 12 source parts, found {len(parts)}")
+          encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
+          Path("Minty-Launcher-source.tar.xz").write_bytes(base64.b64decode(encoded, validate=True))
+          PY
+
+      - name: Extract source archive
+        run: tar -xf Minty-Launcher-source.tar.xz
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -28,16 +45,17 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Extract source archive
-        run: python -m zipfile -e Minty-Launcher-source.zip build-source
+      - name: Run tests
+        working-directory: minty-launcher
+        run: cargo test --all-targets --target x86_64-pc-windows-msvc
 
-      - name: Build
-        working-directory: build-source/minty-launcher
+      - name: Build Windows executable
+        working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Upload executable
+      - name: Upload executable artifact
         uses: actions/upload-artifact@v4
         with:
           name: MintyLauncher-windows-x64
-          path: build-source/minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
+          path: minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
           if-no-files-found: error
