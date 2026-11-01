@@ -319,11 +319,17 @@ fn launch_inner(config: &AppConfig, account: &Account, events: &Sender<LaunchEve
     command.args(&jvm_args).arg(main_class).args(&game_args)
         .current_dir(&instance_dir).stdin(Stdio::null())
         .stdout(Stdio::from(stdout)).stderr(Stdio::from(log_file));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     let child = command.spawn().with_context(|| {
         let os_code = std::io::Error::last_os_error().raw_os_error();
         if os_code == Some(5) {
             format!(
-                "Windows вернул «Отказано в доступе» (Win32 error 5) при запуске Java.\nJava: {}\nПапка игры: {}\n\nMinty использует java.exe вместо javaw.exe. Проверь права доступа к этим путям и исключения антивируса.",
+                "Windows вернул «Отказано в доступе» (Win32 error 5) при запуске Java.\nJava: {}\nПапка игры: {}\n\nMinty запускает игру через javaw.exe без отдельного консольного окна. Проверь права доступа к этим путям и исключения антивируса.",
                 java.display(), game_dir.display()
             )
         } else {

@@ -117,6 +117,11 @@ pub struct MintyApp {
     skin_brush_size: u8,
     skin_mirror: bool,
     skin_region: String,
+    skin_show_grid: bool,
+    skin_show_overlay: bool,
+    skin_alpha: u8,
+    skin_cursor: Option<(usize, usize)>,
+    close_after_launch: bool,
     skin_history_undo: Vec<Vec<u8>>,
     skin_history_redo: Vec<Vec<u8>>,
     boot_stage: BootStage,
@@ -204,6 +209,11 @@ impl MintyApp {
             skin_brush_size: 1,
             skin_mirror: false,
             skin_region: "Вся текстура".to_owned(),
+            skin_show_grid: true,
+            skin_show_overlay: true,
+            skin_alpha: 255,
+            skin_cursor: None,
+            close_after_launch: false,
             skin_history_undo: Vec::new(),
             skin_history_redo: Vec::new(),
             boot_stage: BootStage::CheckingUpdates,
@@ -219,7 +229,20 @@ impl MintyApp {
             benchmark_busy: false,
             ctx: cc.egui_ctx.clone(),
         };
-        app.check_updates();
+        if let Ok(data_dir) = config::data_dir() {
+            let local_skin = data_dir.join("skin.png");
+            if local_skin.is_file() {
+                if let Ok(pixels) = skin::load_png(&local_skin) {
+                    app.skin_pixels = pixels;
+                    app.skin_status = "Загружен локальный скин Minty".to_owned();
+                }
+            }
+        }
+        if app.config.check_updates_on_start {
+            app.check_updates();
+        } else {
+            app.begin_java_search();
+        }
         app
     }
 
@@ -742,6 +765,9 @@ impl MintyApp {
                     self.launch_busy = false;
                     self.install_busy = false;
                     self.launch_cancel = None;
+                    if self.config.close_after_game {
+                        self.close_after_launch = true;
+                    }
                 }
                 LaunchEvent::Cancelled => {
                     self.log("Подготовка Minecraft отменена.");
@@ -874,6 +900,30 @@ impl MintyApp {
         }
     }
 
+    fn save_local_skin(&mut self) {
+        let result = config::data_dir()
+            .map_err(anyhow::Error::from)
+            .and_then(|dir| skin::save_png(&dir.join("skin.png"), &self.skin_pixels));
+        match result {
+            Ok(()) => self.skin_status = "Скин сохранён в локальный профиль Minty".to_owned(),
+            Err(error) => self.skin_status = format!("Не удалось сохранить скин: {error:#}"),
+        }
+    }
+
+    fn flip_skin_horizontal(&mut self) {
+        self.push_skin_undo();
+        let original = self.skin_pixels.clone();
+        for y in 0..64 {
+            for x in 0..64 {
+                let source = (y * 64 + x) * 4;
+                let target = (y * 64 + (63 - x)) * 4;
+                self.skin_pixels[target..target + 4].copy_from_slice(&original[source..source + 4]);
+            }
+        }
+        self.skin_texture = None;
+        self.skin_status = "Текстура отражена по горизонтали".to_owned();
+    }
+
     fn push_skin_undo(&mut self) {
         if self.skin_history_undo.len() >= 40 { self.skin_history_undo.remove(0); }
         self.skin_history_undo.push(self.skin_pixels.clone());
@@ -936,13 +986,16 @@ impl MintyApp {
         )
     }
 
-    fn avatar_widget(&self, ui: &mut egui::Ui, size: f32) {
+    fn avatar_widget(&self, ui: &mut egui::Ui, size: f32) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
         if let Some(texture) = &self.avatar_texture {
-            ui.add(egui::Image::new(texture)
-                .fit_to_exact_size(egui::vec2(size, size))
-                .texture_options(egui::TextureOptions::NEAREST));
+            ui.painter().image(
+                texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
         } else {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
             ui.painter().circle_filled(rect.center(), size * 0.48, self.accent_color());
             let name = self.account.as_ref().map(|account| account.name.as_str())
                 .unwrap_or(self.config.offline_username.as_str());
@@ -950,6 +1003,83 @@ impl MintyApp {
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, initial,
                 FontId::proportional(size * 0.42), Color32::from_rgb(16, 30, 27));
         }
+        ui.painter().rect_stroke(
+            rect.expand(1.0),
+            Rounding::same(size * 0.22),
+            Stroke::new(1.5, self.accent_color()),
+        );
+        response.on_hover_text("Открыть профиль и редактор скинов")
+    }
+
+    fn open_skin_workshop(&mut self) {
+        self.switch_page(Page::Minecraft);
+        self.minecraft_tab = MinecraftTab::Profile;
+        self.page_transition_started = Instant::now();
+        self.skin_status = "Редактор скинов открыт. Импортируй PNG или рисуй на UV-атласе.".to_owned();
+    }
+
+    fn window_titlebar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("minty_custom_titlebar")
+            .exact_height(38.0)
+            .frame(egui::Frame::none().fill(Color32::from_rgb(9, 18, 22))
+                .stroke(Stroke::new(1.0, self.accent_color())))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    let width = (ui.available_width() - 142.0).max(180.0);
+                    let (drag_rect, drag_response) = ui.allocate_exact_size(
+                        egui::vec2(width, 34.0), egui::Sense::click_and_drag()
+                    );
+                    ui.painter().text(
+                        drag_rect.left_center() + egui::vec2(2.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        format!("MINTY  /  LAUNCHER  {}", env!("CARGO_PKG_VERSION")),
+                        FontId::proportional(10.5),
+                        self.accent_color(),
+                    );
+                    if drag_response.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                    if drag_response.double_clicked() {
+                        let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                    let minimized = ui.add_sized(
+                        [40.0, 29.0],
+                        egui::Button::new(RichText::new("—").size(15.0).strong().color(TEXT))
+                            .fill(PANEL).stroke(Stroke::new(1.0, self.accent_color()))
+                            .rounding(Rounding::same(7.0)),
+                    );
+                    if minimized.clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+                    let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+                    let maximize = ui.add_sized(
+                        [40.0, 29.0],
+                        egui::Button::new(RichText::new(if maximized { "❐" } else { "□" }).size(13.0).color(TEXT))
+                            .fill(PANEL).stroke(Stroke::new(1.0, self.accent_color()))
+                            .rounding(Rounding::same(7.0)),
+                    );
+                    if maximize.clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                    let close = ui.add_sized(
+                        [40.0, 29.0],
+                        egui::Button::new(RichText::new("×").size(19.0).strong().color(TEXT))
+                            .fill(Color32::from_rgb(65, 31, 39))
+                            .stroke(Stroke::new(1.0, self.accent_color()))
+                            .rounding(Rounding::same(7.0)),
+                    );
+                    if close.clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    ui.add_space(8.0);
+                });
+            });
+    }
+
+    fn ui_label(&self, key: &str) -> &'static str {
+        translate_label(&self.config.language, key)
     }
 
     fn switch_page(&mut self, page: Page) {
@@ -966,34 +1096,38 @@ impl MintyApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let (logo, _) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::hover());
-                    ui.painter().rect_filled(logo, Rounding::same(11.0), self.accent_color());
-                    ui.painter().text(logo.center(), egui::Align2::CENTER_CENTER, "M",
-                        FontId::proportional(24.0), Color32::from_rgb(15, 31, 25));
+                    ui.painter().image(
+                        self.logo_texture.id(),
+                        logo,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
                     ui.add_space(7.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new("MINTY").size(18.0).strong().color(TEXT));
                         ui.label(RichText::new("JAVA  ·  BEDROCK").size(8.0).strong().color(MUTED));
                     });
                     ui.add_space(26.0);
-                    self.top_tab(ui, "Главная", Page::Home);
-                    self.top_tab(ui, "Minecraft", Page::Minecraft);
-                    self.top_tab(ui, "Настройки", Page::Settings);
+                    self.top_tab(ui, self.ui_label("home"), Page::Home);
+                    self.top_tab(ui, self.ui_label("minecraft"), Page::Minecraft);
+                    self.top_tab(ui, self.ui_label("settings"), Page::Settings);
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if self.launch_busy {
                             let cancel = egui::Button::new(RichText::new("Отмена запуска Minecraft").strong().color(Color32::WHITE))
                                 .fill(RED).rounding(Rounding::same(9.0));
-                            if ui.add(cancel).clicked() { self.cancel_launch(); }
+                            if ui.add_sized([164.0, 36.0], cancel).clicked() { self.cancel_launch(); }
                             ui.add_space(10.0);
                         }
-                        self.avatar_widget(ui, 36.0);
-                        ui.add_space(8.0);
+                        let avatar_clicked = self.avatar_widget(ui, 38.0).clicked();
+                        if avatar_clicked { self.open_skin_workshop(); }
+                        ui.add_space(9.0);
                         ui.vertical(|ui| {
                             let name = self.account.as_ref().map(|account| account.name.as_str())
                                 .unwrap_or(self.config.offline_username.as_str());
-                            ui.label(RichText::new(name).strong().color(TEXT).size(11.0));
-                            ui.label(RichText::new(if self.account.is_some() { "Microsoft" } else { "Офлайн" })
-                                .size(9.0).color(MUTED));
+                            ui.add_sized([118.0, 18.0], egui::Label::new(RichText::new(name).strong().color(TEXT).size(11.0)).truncate());
+                            ui.label(RichText::new(if self.account.is_some() { self.ui_label("microsoft") } else { self.ui_label("offline") })
+                                .size(9.0).color(if self.account.is_some() { self.accent_color() } else { MUTED }));
                         });
                     });
                 });
@@ -1166,7 +1300,7 @@ impl MintyApp {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(RichText::new("MINECRAFT").size(9.0).strong().color(self.accent_color()));
-                ui.label(RichText::new("Игровая библиотека").size(27.0).strong().color(TEXT));
+                ui.label(RichText::new(self.ui_label("minecraft")).size(27.0).strong().color(TEXT));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Открыть папку игры").clicked() {
@@ -1177,11 +1311,11 @@ impl MintyApp {
         });
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            self.minecraft_tab_button(ui, "Сборки", MinecraftTab::Builds);
-            self.minecraft_tab_button(ui, "Версии", MinecraftTab::Versions);
-            self.minecraft_tab_button(ui, "Профиль", MinecraftTab::Profile);
-            self.minecraft_tab_button(ui, "Моды", MinecraftTab::Mods);
-            self.minecraft_tab_button(ui, "Bedrock", MinecraftTab::Bedrock);
+            self.minecraft_tab_button(ui, self.ui_label("builds"), MinecraftTab::Builds);
+            self.minecraft_tab_button(ui, self.ui_label("versions"), MinecraftTab::Versions);
+            self.minecraft_tab_button(ui, self.ui_label("profile"), MinecraftTab::Profile);
+            self.minecraft_tab_button(ui, self.ui_label("mods"), MinecraftTab::Mods);
+            self.minecraft_tab_button(ui, self.ui_label("bedrock"), MinecraftTab::Bedrock);
         });
         ui.add_space(10.0);
         match self.minecraft_tab {
@@ -1279,14 +1413,14 @@ impl MintyApp {
 
     fn profile_page(&mut self, ui: &mut egui::Ui) {
         ui.add_space(5.0);
-        ui.label(RichText::new("Профиль Minecraft").size(23.0).strong().color(TEXT));
+        ui.label(RichText::new(self.ui_label("profile")).size(23.0).strong().color(TEXT));
         ui.label(RichText::new("Аккаунт, аватар и внешний вид персонажа.").size(12.0).color(MUTED));
         ui.add_space(12.0);
         egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
             .inner_margin(egui::Margin::same(15.0)).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    self.avatar_widget(ui, 58.0);
-                    ui.add_space(8.0);
+                    let _ = self.avatar_widget(ui, 64.0);
+                    ui.add_space(10.0);
                     ui.vertical(|ui| {
                         let name = self.account.as_ref().map(|account| account.name.as_str())
                             .unwrap_or(self.config.offline_username.as_str());
@@ -1309,6 +1443,11 @@ impl MintyApp {
                         } else if ui.small_button("Войти через Microsoft").clicked() {
                             self.begin_login();
                         }
+                        ui.add_space(5.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Импортировать скин").clicked() { self.import_skin(); }
+                            if ui.button("Сохранить локально").clicked() { self.save_local_skin(); }
+                        });
                     });
                 });
             });
@@ -1348,7 +1487,7 @@ impl MintyApp {
                             ("Ресурспаки", "resourcepack"), ("Шейдеры", "shader"),
                         ] {
                             let selected = self.mod_category == category;
-                            if ui.add(egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
+                            if ui.add_sized([116.0, 34.0], egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
                                 .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
                                 self.mod_category = category.to_owned();
                                 category_changed = true;
@@ -1378,10 +1517,12 @@ impl MintyApp {
                         self.search_mod_store();
                     }
                     ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.mod_search)
-                            .desired_width(350.0).hint_text("Найти мод: Sodium, JEI, Xaero's…"));
+                        let search_width = (ui.available_width() - 174.0).max(180.0);
+                        ui.add_sized([search_width, 36.0], egui::TextEdit::singleline(&mut self.mod_search)
+                            .hint_text("Найти мод: Sodium, JEI, Xaero's…"));
                         if ui.add_enabled(!self.mod_searching && !self.mod_installing,
                             egui::Button::new(if self.mod_searching { "Ищу…" } else { "Найти на Modrinth" })
+                                .min_size(egui::vec2(160.0, 36.0))
                                 .fill(self.accent_color()).rounding(Rounding::same(8.0))).clicked() {
                             self.search_mod_store();
                         }
@@ -1406,53 +1547,73 @@ impl MintyApp {
                 });
             ui.add_space(12.0);
             let projects = self.mods.clone();
-            egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
-                .inner_margin(egui::Margin::same(12.0)).show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(390.0).show(ui, |ui| {
-                        if projects.is_empty() {
-                            ui.label(RichText::new("Загружаем популярные проекты каталога. Поиск доступен выше.")
-                                .color(MUTED));
-                        }
-                        let mut requested = None;
-                        for project in projects {
-                            ui.horizontal(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
-                                ui.painter().rect_filled(rect, Rounding::same(9.0), PANEL_LIGHT);
-                                let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
-                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, mark,
-                                    FontId::proportional(22.0), self.accent_color());
-                                ui.add_space(6.0);
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(&project.title).strong().color(TEXT).size(13.0));
-                                    let description: String = project.description.chars().take(115).collect();
-                                    ui.label(RichText::new(description).size(10.0).color(MUTED));
-                                    ui.label(RichText::new(format!("{} загрузок · {}", project.downloads, project.project_type))
-                                        .size(9.0).color(self.accent_color()));
-                                    if let Some(version) = &project.latest_version {
-                                        ui.label(RichText::new(format!("Последняя версия: {version}")).size(9.0).color(MUTED));
-                                    }
-                                });
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if self.mod_category == "mod" {
-                                        if ui.add_enabled(!self.mod_installing,
-                                            egui::Button::new(if self.mod_installing { "Установка…" } else { "Установить" })
-                                                .rounding(Rounding::same(8.0))).clicked() {
-                                            requested = Some(project.slug.clone());
+            let mut requested = None;
+            if projects.is_empty() {
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+                    .inner_margin(egui::Margin::same(18.0)).show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new(if self.mod_searching { "Ищем проекты в Modrinth…" } else { "Каталог пока пуст" })
+                                .size(14.0).strong().color(TEXT));
+                            ui.label(RichText::new("Попробуй изменить запрос или выбрать другую категорию.")
+                                .size(10.0).color(MUTED));
+                        });
+                    });
+            } else {
+                ui.columns(2, |columns| {
+                    for (index, project) in projects.iter().enumerate() {
+                        let card_ui = &mut columns[index % 2];
+                        egui::Frame::none()
+                            .fill(PANEL)
+                            .stroke(Stroke::new(1.0, Color32::from_rgb(43, 57, 66)))
+                            .rounding(Rounding::same(14.0))
+                            .inner_margin(egui::Margin::same(12.0))
+                            .show(card_ui, |ui| {
+                                ui.set_min_height(172.0);
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
+                                    ui.painter().rect_filled(rect, Rounding::same(11.0), PANEL_LIGHT);
+                                    ui.painter().rect_stroke(rect, Rounding::same(11.0), Stroke::new(1.0, self.accent_color()));
+                                    let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
+                                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, mark,
+                                        FontId::proportional(20.0), self.accent_color());
+                                    ui.vertical(|ui| {
+                                        ui.add_sized([ui.available_width(), 19.0],
+                                            egui::Label::new(RichText::new(&project.title).strong().color(TEXT).size(12.5)).truncate());
+                                        ui.label(RichText::new(format!("{} загрузок", project.downloads))
+                                            .size(9.0).color(self.accent_color()));
+                                        if let Some(version) = &project.latest_version {
+                                            ui.add_sized([ui.available_width(), 16.0],
+                                                egui::Label::new(RichText::new(format!("Версия {version}")).size(9.0).color(MUTED)).truncate());
                                         }
-                                    } else if ui.small_button("Открыть проект").clicked() {
-                                        let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug));
-                                    }
-                                    if ui.small_button("Страница ↗").clicked() {
-                                        let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug));
-                                    }
+                                    });
+                                });
+                                ui.add_space(6.0);
+                                let description: String = project.description.chars().take(104).collect();
+                                ui.add_sized([ui.available_width(), 32.0],
+                                    egui::Label::new(RichText::new(description).size(9.5).color(MUTED)).wrap());
+                                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                                    ui.horizontal(|ui| {
+                                        let primary_label = if self.mod_category == "mod" { "Установить" } else { "Открыть проект" };
+                                        let primary = ui.add_sized([112.0, 32.0],
+                                            egui::Button::new(if self.mod_installing && self.mod_category == "mod" { "Установка…" } else { primary_label })
+                                                .fill(if self.mod_category == "mod" { self.accent_color() } else { PANEL_LIGHT })
+                                                .rounding(Rounding::same(8.0)));
+                                        if primary.clicked() {
+                                            if self.mod_category == "mod" { requested = Some(project.slug.clone()); }
+                                            else { let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug)); }
+                                        }
+                                        if ui.add_sized([92.0, 32.0], egui::Button::new("Страница ↗")
+                                            .fill(PANEL_LIGHT).rounding(Rounding::same(8.0))).clicked() {
+                                            let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug));
+                                        }
+                                    });
                                 });
                             });
-                            ui.add_space(7.0);
-                            ui.separator();
-                        }
-                        if let Some(slug) = requested { self.install_store_mod(slug); }
-                    });
+                        columns[index % 2].add_space(8.0);
+                    }
                 });
+                if let Some(slug) = requested { self.install_store_mod(slug); }
+            }
             ui.add_space(13.0);
             let mods_dir = self.profile_instance_dir().join("mods");
             let installed_mods: Vec<PathBuf> = std::fs::read_dir(&mods_dir)
@@ -1475,9 +1636,12 @@ impl MintyApp {
                             ui.horizontal(|ui| {
                                 let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("mod.jar");
                                 ui.label(RichText::new("◆").color(self.accent_color()));
-                                ui.label(RichText::new(name).size(10.0).color(TEXT));
+                                ui.add_sized([260.0, 28.0], egui::Label::new(RichText::new(name).size(10.0).color(TEXT)).truncate());
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.small_button("Удалить").clicked() { remove_path = Some(path.clone()); }
+                                    if ui.add_sized([88.0, 28.0], egui::Button::new("Удалить")
+                                        .fill(Color32::from_rgb(62, 35, 42)).rounding(Rounding::same(7.0))).clicked() {
+                                        remove_path = Some(path.clone());
+                                    }
                                 });
                             });
                             ui.separator();
@@ -1685,86 +1849,130 @@ impl MintyApp {
         ui.label(RichText::new(format!("Папка Java Edition: {}", self.config.game_dir.display())).size(10.0).color(MUTED));
     }
 
-    fn skin_page(&mut self,ui:&mut egui::Ui){
-        egui::ScrollArea::vertical().auto_shrink([false,false]).show(ui,|ui|{
+    fn skin_page(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(7.0);
-            ui.horizontal(|ui|{
-                ui.vertical(|ui|{
-                    ui.label(RichText::new("SKIN WORKSHOP").size(9.0).strong().color(self.accent_color()));
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("SKIN WORKSHOP  /  64×64").size(9.0).strong().color(self.accent_color()));
                     ui.label(RichText::new("Редактор скинов").size(27.0).strong().color(TEXT));
-                    ui.label(RichText::new("Полная UV-текстура Minecraft 64×64").size(12.0).color(MUTED));
+                    ui.label(RichText::new("Пиксельный UV-редактор с предпросмотром, слоями и историей.")
+                        .size(11.0).color(MUTED));
                 });
-                ui.with_layout(Layout::right_to_left(Align::Center),|ui|{
-                    if ui.button("Экспорт PNG").clicked(){self.export_skin();}
-                    if ui.button("Импорт PNG").clicked(){self.import_skin();}
-                    if ui.add_enabled(!self.skin_history_undo.is_empty(),egui::Button::new("↶ Отменить")).clicked(){self.undo_skin();}
-                    if ui.add_enabled(!self.skin_history_redo.is_empty(),egui::Button::new("↷ Повторить")).clicked(){self.redo_skin();}
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add_sized([104.0, 34.0], egui::Button::new("Экспорт PNG")).clicked() { self.export_skin(); }
+                    if ui.add_sized([104.0, 34.0], egui::Button::new("Импорт PNG")).clicked() { self.import_skin(); }
                 });
             });
             ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui|{
-                for label in ["Вся текстура","Голова","Тело","Руки","Ноги"]{
-                    let selected=self.skin_region==label;
-                    if ui.add(egui::Button::new(RichText::new(label).strong().color(if selected{TEXT}else{MUTED}))
-                        .fill(if selected{PANEL_LIGHT}else{PANEL}).rounding(Rounding::same(8.0))).clicked(){self.skin_region=label.to_owned();}
+            egui::Frame::none().fill(PANEL).rounding(Rounding::same(13.0))
+                .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, action, enabled) in [
+                            ("↶ Отменить", 0, !self.skin_history_undo.is_empty()),
+                            ("↷ Повторить", 1, !self.skin_history_redo.is_empty()),
+                            ("Отразить X", 2, true),
+                            ("Сохранить в Minty", 3, true),
+                            ("Очистить всё", 4, true),
+                        ] {
+                            if ui.add_enabled(enabled, egui::Button::new(label).min_size(egui::vec2(118.0, 32.0))
+                                .fill(PANEL_LIGHT).rounding(Rounding::same(8.0))).clicked() {
+                                match action {
+                                    0 => self.undo_skin(),
+                                    1 => self.redo_skin(),
+                                    2 => self.flip_skin_horizontal(),
+                                    3 => self.save_local_skin(),
+                                    4 => {
+                                        self.push_skin_undo();
+                                        self.skin_pixels = skin::blank();
+                                        self.skin_texture = None;
+                                        self.skin_status = "Текстура полностью очищена".to_owned();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    });
+                });
+            ui.add_space(9.0);
+            ui.horizontal_wrapped(|ui| {
+                for label in ["Вся текстура", "Голова", "Тело", "Руки", "Ноги"] {
+                    let selected = self.skin_region == label;
+                    if ui.add_sized([112.0, 32.0],
+                        egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
+                            .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
+                        self.skin_region = label.to_owned();
+                    }
                 }
             });
-            ui.add_space(10.0);
-            ui.columns(2,|columns|{
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0)).inner_margin(egui::Margin::same(12.0))
-                    .show(&mut columns[0],|ui|{
-                        ui.horizontal(|ui|{
+            ui.add_space(9.0);
+            ui.columns(2, |columns| {
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+                    .inner_margin(egui::Margin::same(12.0)).show(&mut columns[0], |ui| {
+                        ui.horizontal(|ui| {
                             ui.label(RichText::new("UV-АТЛАС").size(9.0).strong().color(MUTED));
-                            ui.add(egui::Slider::new(&mut self.skin_zoom,4.0..=9.0).show_value(false));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.checkbox(&mut self.skin_show_grid, "Сетка");
+                                ui.add(egui::Slider::new(&mut self.skin_zoom, 4.0..=9.0).show_value(false).text("Масштаб"));
+                            });
                         });
                         self.skin_canvas(ui);
-                        ui.label(RichText::new("Шахматный фон показывает прозрачность; толстые линии отмечают блоки 8×8.")
+                        ui.horizontal(|ui| {
+                            let cursor = self.skin_cursor.map(|(x, y)| format!("X: {x}  ·  Y: {y}"))
+                                .unwrap_or_else(|| "Наведи курсор на пиксель".to_owned());
+                            ui.label(RichText::new(cursor).monospace().size(9.0).color(self.accent_color()));
+                        });
+                        ui.label(RichText::new("Левая кнопка мыши рисует. Крупная сетка отмечает блоки 8×8.")
                             .size(9.0).color(MUTED));
                     });
-                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0)).inner_margin(egui::Margin::same(13.0))
-                    .show(&mut columns[1],|ui|{
+                egui::Frame::none().fill(PANEL).rounding(Rounding::same(15.0))
+                    .inner_margin(egui::Margin::same(12.0)).show(&mut columns[1], |ui| {
                         ui.label(RichText::new("ИНСТРУМЕНТЫ").size(9.0).strong().color(MUTED));
-                        ui.horizontal_wrapped(|ui|{
-                            for (name,tool) in [("✎ Кисть",SkinTool::Brush),("◩ Ластик",SkinTool::Eraser),("▨ Заливка",SkinTool::Fill),("⌖ Пипетка",SkinTool::Eyedropper)]{
-                                let selected=self.skin_tool==tool;
-                                if ui.add(egui::Button::new(RichText::new(name).strong().color(if selected{TEXT}else{MUTED}))
-                                    .fill(if selected{PANEL_LIGHT}else{BG}).rounding(Rounding::same(8.0))).clicked(){self.skin_tool=tool;}
+                        ui.horizontal_wrapped(|ui| {
+                            for (name, tool) in [("✎ Кисть", SkinTool::Brush), ("◩ Ластик", SkinTool::Eraser),
+                                ("▨ Заливка", SkinTool::Fill), ("⌖ Пипетка", SkinTool::Eyedropper)] {
+                                let selected = self.skin_tool == tool;
+                                if ui.add_sized([103.0, 32.0],
+                                    egui::Button::new(RichText::new(name).strong().color(if selected { TEXT } else { MUTED }))
+                                        .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
+                                    self.skin_tool = tool;
+                                }
                             }
                         });
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Цвет").size(10.0).color(MUTED));
-                        ui.horizontal(|ui|{
+                        ui.label(RichText::new("ЦВЕТ И КИСТЬ").size(9.0).strong().color(MUTED));
+                        ui.horizontal(|ui| {
                             ui.color_edit_button_srgba(&mut self.skin_color);
-                            ui.label(RichText::new(format!("#{:02X}{:02X}{:02X}",self.skin_color.r(),self.skin_color.g(),self.skin_color.b())).monospace().size(9.0).color(TEXT));
+                            ui.label(RichText::new(format!("#{:02X}{:02X}{:02X}", self.skin_color.r(), self.skin_color.g(), self.skin_color.b()))
+                                .monospace().size(10.0).color(TEXT));
                         });
-                        ui.label(RichText::new("Размер кисти").size(10.0).color(MUTED));
-                        ui.add(egui::Slider::new(&mut self.skin_brush_size,1..=8).suffix(" px"));
-                        ui.checkbox(&mut self.skin_mirror,"Зеркальное рисование");
-                        ui.add_space(7.0);
-                        ui.label(RichText::new("ПАЛИТРА").size(9.0).strong().color(MUTED));
-                        ui.horizontal_wrapped(|ui|{
-                            for color in [Color32::from_rgb(35,35,42),Color32::from_rgb(235,190,145),Color32::from_rgb(75,125,200),
-                                Color32::from_rgb(180,65,75),Color32::from_rgb(85,165,105),Color32::from_rgb(240,210,90),
-                                Color32::WHITE,Color32::BLACK,Color32::TRANSPARENT]{
-                                if ui.add_sized([24.0,24.0],egui::Button::new(" ").fill(color)).clicked(){self.skin_color=color;}
+                        ui.add(egui::Slider::new(&mut self.skin_brush_size, 1..=8).suffix(" px").text("Размер кисти"));
+                        ui.add(egui::Slider::new(&mut self.skin_alpha, 0..=255).text("Непрозрачность"));
+                        ui.checkbox(&mut self.skin_mirror, "Зеркальное рисование");
+                        ui.checkbox(&mut self.skin_show_overlay, "Показывать внешний слой в превью");
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("БЫСТРАЯ ПАЛИТРА").size(9.0).strong().color(MUTED));
+                        ui.horizontal_wrapped(|ui| {
+                            for color in [
+                                Color32::from_rgb(32, 36, 45), Color32::from_rgb(238, 193, 150),
+                                Color32::from_rgb(76, 125, 204), Color32::from_rgb(184, 67, 79),
+                                Color32::from_rgb(84, 166, 109), Color32::from_rgb(244, 211, 93),
+                                Color32::from_rgb(39, 160, 144), Color32::from_rgb(160, 115, 205),
+                                Color32::WHITE, Color32::BLACK, Color32::TRANSPARENT,
+                            ] {
+                                if ui.add_sized([25.0, 25.0], egui::Button::new(" ").fill(color)
+                                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(35)))).clicked() {
+                                    self.skin_color = color;
+                                }
                             }
                         });
-                        ui.add_space(10.0);
-                        ui.label(RichText::new("ПРЕДПРОСМОТР ТЕКСТУРЫ").size(9.0).strong().color(MUTED));
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("ПРЕДПРОСМОТР ПЕРСОНАЖА").size(9.0).strong().color(MUTED));
                         self.skin_preview(ui);
                         ui.label(RichText::new(&self.skin_status).size(10.0).color(self.accent_color()));
-                        if ui.button("Очистить выбранную область").clicked(){
-                            self.push_skin_undo();
-                            for (x,y,w,h) in skin_region_rects(&self.skin_region){
-                                for py in y..(y+h).min(64){for px in x..(x+w).min(64){
-                                    let o=(py*64+px)*4; self.skin_pixels[o..o+4].copy_from_slice(&[0,0,0,0]);
-                                }}
-                            }
-                            self.skin_texture=None; self.skin_status="Область очищена".to_owned();
-                        }
                     });
             });
-            ui.label(RichText::new("Экспорт создаёт готовый PNG. Публикация через Ely.by или Microsoft/Mojang требует отдельной авторизации.")
+            ui.label(RichText::new("Сохранение в Minty хранит PNG локально. Публикация на Microsoft/Mojang или Ely.by требует отдельной авторизации.")
                 .size(9.0).color(MUTED));
         });
     }
@@ -1783,11 +1991,17 @@ impl MintyApp {
         if let Some(texture)=self.skin_texture.as_ref(){
             painter.image(texture.id(),rect,egui::Rect::from_min_max(egui::pos2(0.0,0.0),egui::pos2(1.0,1.0)),Color32::WHITE);
         }
-        for i in 0..=64{
-            let x=rect.left()+rect.width()*i as f32/64.0; let y=rect.top()+rect.height()*i as f32/64.0;
-            let major=i%8==0; let c=if major{Color32::from_white_alpha(90)}else{Color32::from_white_alpha(25)};
-            painter.line_segment([egui::pos2(x,rect.top()),egui::pos2(x,rect.bottom())],Stroke::new(if major{1.0}else{0.5},c));
-            painter.line_segment([egui::pos2(rect.left(),y),egui::pos2(rect.right(),y)],Stroke::new(if major{1.0}else{0.5},c));
+        if self.skin_show_grid {
+            for i in 0..=64 {
+                let x = rect.left() + rect.width() * i as f32 / 64.0;
+                let y = rect.top() + rect.height() * i as f32 / 64.0;
+                let major = i % 8 == 0;
+                let c = if major { Color32::from_white_alpha(90) } else { Color32::from_white_alpha(25) };
+                painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    Stroke::new(if major { 1.0 } else { 0.5 }, c));
+                painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                    Stroke::new(if major { 1.0 } else { 0.5 }, c));
+            }
         }
         for (x,y,w,h) in skin_region_rects(&self.skin_region){
             let area=egui::Rect::from_min_max(egui::pos2(rect.left()+x as f32*side/64.0,rect.top()+y as f32*side/64.0),
@@ -1798,6 +2012,7 @@ impl MintyApp {
             if let Some(pos)=response.interact_pointer_pos(){
                 let x=(((pos.x-rect.left())/side)*64.0).floor().clamp(0.0,63.0) as usize;
                 let y=(((pos.y-rect.top())/side)*64.0).floor().clamp(0.0,63.0) as usize;
+                self.skin_cursor = Some((x, y));
                 if response.drag_started()&&self.skin_tool!=SkinTool::Eyedropper{self.push_skin_undo();}
                 if response.dragged()||response.clicked(){
                     match self.skin_tool{
@@ -1806,7 +2021,13 @@ impl MintyApp {
                         SkinTool::Fill if response.clicked()=>{self.push_skin_undo();self.fill_skin_area(x,y,self.skin_color);}
                         SkinTool::Brush|SkinTool::Eraser=>{
                             if response.clicked()&&!response.dragged(){self.push_skin_undo();}
-                            let c=if self.skin_tool==SkinTool::Eraser{Color32::TRANSPARENT}else{self.skin_color};
+                            let c = if self.skin_tool == SkinTool::Eraser {
+                                Color32::TRANSPARENT
+                            } else {
+                                Color32::from_rgba_unmultiplied(
+                                    self.skin_color.r(), self.skin_color.g(), self.skin_color.b(), self.skin_alpha
+                                )
+                            };
                             self.paint_skin_pixel(x,y,c);
                         }
                         _=>{}
@@ -1835,6 +2056,11 @@ impl MintyApp {
             draw(egui::Rect::from_min_size(egui::pos2(x+136.0,y+69.0),egui::vec2(23.0,108.0)),uv(36,52,4,12));
             draw(egui::Rect::from_min_size(egui::pos2(x+58.0,y+180.0),egui::vec2(34.0,57.0)),uv(4,20,4,12));
             draw(egui::Rect::from_min_size(egui::pos2(x+98.0,y+180.0),egui::vec2(34.0,57.0)),uv(20,52,4,12));
+            if self.skin_show_overlay {
+                draw(egui::Rect::from_min_size(egui::pos2(x+66.0,y+7.0),egui::vec2(58.0,58.0)),uv(40,8,8,8));
+                draw(egui::Rect::from_min_size(egui::pos2(x+57.0,y+69.0),egui::vec2(76.0,108.0)),uv(20,36,8,12));
+                draw(egui::Rect::from_min_size(egui::pos2(x+31.0,y+69.0),egui::vec2(23.0,108.0)),uv(44,36,4,12));
+            }
         }
     }
 
@@ -1897,17 +2123,19 @@ impl MintyApp {
             egui::Frame::none().fill(PANEL).rounding(Rounding::same(12.0))
                 .inner_margin(egui::Margin::same(7.0)).show(ui, |ui| {
                     ui.set_min_width(168.0);
-                    ui.vertical(|ui| {
-                        self.settings_tab_button(ui, "Основные", SettingsTab::General);
-                        self.settings_tab_button(ui, "Minecraft", SettingsTab::Game);
-                        self.settings_tab_button(ui, "Java", SettingsTab::Java);
-                        self.settings_tab_button(ui, "Производительность", SettingsTab::Performance);
-                        self.settings_tab_button(ui, "Оформление", SettingsTab::Appearance);
-                        self.settings_tab_button(ui, "Аккаунт", SettingsTab::Account);
-                        self.settings_tab_button(ui, "Файлы и хранилище", SettingsTab::Storage);
-                        self.settings_tab_button(ui, "Безопасность", SettingsTab::Security);
-                        self.settings_tab_button(ui, "Обновления", SettingsTab::Updates);
-                        self.settings_tab_button(ui, "Журнал", SettingsTab::Journal);
+                    egui::ScrollArea::vertical().max_height(ui.available_height()).show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            self.settings_tab_button(ui, self.ui_label("general"), SettingsTab::General);
+                            self.settings_tab_button(ui, self.ui_label("game"), SettingsTab::Game);
+                            self.settings_tab_button(ui, self.ui_label("java"), SettingsTab::Java);
+                            self.settings_tab_button(ui, self.ui_label("performance"), SettingsTab::Performance);
+                            self.settings_tab_button(ui, self.ui_label("appearance"), SettingsTab::Appearance);
+                            self.settings_tab_button(ui, self.ui_label("account"), SettingsTab::Account);
+                            self.settings_tab_button(ui, self.ui_label("storage"), SettingsTab::Storage);
+                            self.settings_tab_button(ui, self.ui_label("security"), SettingsTab::Security);
+                            self.settings_tab_button(ui, self.ui_label("updates"), SettingsTab::Updates);
+                            self.settings_tab_button(ui, self.ui_label("journal"), SettingsTab::Journal);
+                        });
                     });
                 });
             ui.add_space(10.0);
@@ -1973,10 +2201,21 @@ impl MintyApp {
                     ui.add(egui::TextEdit::singleline(&mut self.config.offline_username).desired_width(330.0));
                     ui.label(RichText::new("Используется при запуске офлайн-профиля.").size(10.0).color(MUTED));
                     ui.separator();
-                    ui.label(RichText::new("ЯЗЫК").size(9.0).strong().color(MUTED));
-                    ui.label(RichText::new("Русский").strong().color(TEXT));
-                    ui.label(RichText::new("Русский — основной язык текущей версии Minty.").size(10.0).color(MUTED));
+                    ui.label(RichText::new("ЯЗЫК МЕНЮ").size(9.0).strong().color(MUTED));
+                    egui::ComboBox::from_id_source("minty_language_picker")
+                        .selected_text(&self.config.language)
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for language in ["Русский", "English", "Deutsch", "Français", "Español",
+                                "Polski", "Українська", "Türkçe", "Português", "日本語"] {
+                                ui.selectable_value(&mut self.config.language, language.to_owned(), language);
+                            }
+                        });
+                    ui.label(RichText::new("Переведены навигация, названия разделов и ключевые элементы. Подробные технические описания пока остаются на русском.")
+                        .size(10.0).color(MUTED));
                     ui.separator();
+                    ui.checkbox(&mut self.config.check_updates_on_start, "Проверять обновления при запуске");
+                    ui.checkbox(&mut self.config.close_after_game, "Закрывать лаунчер после запуска Minecraft");
                     ui.checkbox(&mut self.config.enable_animations, "Анимировать переходы между разделами");
                 });
             self.settings_save_button(ui);
@@ -2032,6 +2271,8 @@ impl MintyApp {
                             ui.selectable_value(&mut self.config.gc_algorithm, "ZGC".to_owned(), "ZGC");
                             ui.selectable_value(&mut self.config.gc_algorithm, "Shenandoah".to_owned(), "Shenandoah");
                         });
+                    ui.label(RichText::new("Автоподбор выбирает совместимую Java. Игра запускается через javaw.exe, а диагностические проверки используют скрытый режим.")
+                        .size(10.0).color(MUTED));
                     ui.label(RichText::new("ZGC и Shenandoah требуют совместимой версии Java.")
                         .size(10.0).color(MUTED));
                 });
@@ -2072,8 +2313,10 @@ impl MintyApp {
                         ui.label(RichText::new("Это синтетический тест CPU/памяти, а не прогноз FPS Minecraft.")
                             .size(9.0).color(MUTED));
                     }
-                    ui.checkbox(&mut self.config.auto_graphics_profile, "Автоматический профиль графики");
+                    ui.checkbox(&mut self.config.auto_graphics_profile, "Автоматически определять профиль графики");
                     ui.checkbox(&mut self.config.weak_pc_mode, "Режим «Слабый ПК»");
+                    ui.label(RichText::new("Параметры оптимизации применяются к активному игровому профилю перед запуском.")
+                        .size(10.0).color(MUTED));
                     ui.label(RichText::new("Режим оптимизирует поддерживаемые параметры options.txt. FPS также зависит от видеокарты, драйвера, мира и модов.")
                         .size(10.0).color(MUTED));
                 });
@@ -2105,7 +2348,9 @@ impl MintyApp {
                         }
                     });
                     ui.checkbox(&mut self.config.enable_animations, "Плавные анимации вкладок");
-                    ui.label(RichText::new("Видео-фоны и музыка пока не включены; здесь доступны цветовые темы и нативные переходы.")
+                    ui.label(RichText::new("Кнопки свернуть, развернуть и закрыть используют собственную рамку Minty с акцентным цветом.")
+                        .size(10.0).color(MUTED));
+                    ui.label(RichText::new("Выбранный цвет применяется к рамке окна, активным вкладкам, выделению и основным кнопкам.")
                         .size(10.0).color(MUTED));
                 });
             self.settings_save_button(ui);
@@ -2255,7 +2500,7 @@ impl MintyApp {
         ui.add_space(8.0);
         ui.separator();
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("●").color(if self.error.is_some() { RED } else { MINT }).size(10.0));
                 ui.label(RichText::new(&self.status).size(10.0).color(MUTED));
             });
@@ -2311,6 +2556,7 @@ impl MintyApp {
 impl eframe::App for MintyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_events();
+        self.window_titlebar(ctx);
         if self.boot_stage != BootStage::Ready {
             self.splash_screen(ctx);
             return;
@@ -2339,7 +2585,7 @@ impl eframe::App for MintyApp {
             let interval = if self.config.weak_pc_mode { 500 } else { 180 };
             ctx.request_repaint_after(Duration::from_millis(interval));
         }
-        if self.restart_for_update {
+        if self.restart_for_update || self.close_after_launch {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if self.auth_busy && self.device_code.is_none() {
@@ -2387,6 +2633,46 @@ fn skin_region_rects(region:&str)->Vec<(usize,usize,usize,usize)>{
         "Ноги"=>vec![(0,16,16,16),(16,48,16,16)],
         _=>vec![(0,0,64,64)],
     }
+}
+
+
+fn translate_label(language: &str, key: &str) -> &'static str {
+    let index = match language {
+        "English" => 1,
+        "Deutsch" => 2,
+        "Français" => 3,
+        "Español" => 4,
+        "Polski" => 5,
+        "Українська" => 6,
+        "Türkçe" => 7,
+        "Português" => 8,
+        "日本語" => 9,
+        _ => 0,
+    };
+    let values: [&'static str; 10] = match key {
+        "home" => ["Главная", "Home", "Startseite", "Accueil", "Inicio", "Główna", "Головна", "Ana sayfa", "Início", "ホーム"],
+        "minecraft" => ["Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft"],
+        "settings" => ["Настройки", "Settings", "Einstellungen", "Paramètres", "Ajustes", "Ustawienia", "Налаштування", "Ayarlar", "Configurações", "設定"],
+        "microsoft" => ["Microsoft", "Microsoft", "Microsoft", "Microsoft", "Microsoft", "Microsoft", "Microsoft", "Microsoft", "Microsoft", "Microsoft"],
+        "offline" => ["Офлайн", "Offline", "Offline", "Hors ligne", "Sin conexión", "Offline", "Çevrimdışı", "Çevrimdışı", "Offline", "オフライン"],
+        "builds" => ["Сборки", "Profiles", "Profile", "Profils", "Perfiles", "Profile", "Profiller", "Perfis", "Perfis", "プロファイル"],
+        "versions" => ["Версии", "Versions", "Versionen", "Versions", "Versiones", "Wersje", "Sürümler", "Versões", "Versões", "バージョン"],
+        "profile" => ["Профиль", "Profile", "Profil", "Profil", "Perfil", "Profil", "Profil", "Perfil", "Perfil", "プロフィール"],
+        "mods" => ["Моды", "Mods", "Mods", "Mods", "Mods", "Mody", "Modlar", "Mods", "Mods", "MOD"],
+        "bedrock" => ["Bedrock", "Bedrock", "Bedrock", "Bedrock", "Bedrock", "Bedrock", "Bedrock", "Bedrock", "Bedrock", "Bedrock"],
+        "general" => ["Основные", "General", "Allgemein", "Général", "General", "Ogólne", "Genel", "Geral", "Geral", "一般"],
+        "game" => ["Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft", "Minecraft"],
+        "java" => ["Java", "Java", "Java", "Java", "Java", "Java", "Java", "Java", "Java", "Java"],
+        "performance" => ["Производительность", "Performance", "Leistung", "Performances", "Rendimiento", "Wydajność", "Performans", "Desempenho", "Desempenho", "パフォーマンス"],
+        "appearance" => ["Оформление", "Appearance", "Darstellung", "Apparence", "Apariencia", "Wygląd", "Görünüm", "Aparência", "Aparência", "外観"],
+        "account" => ["Аккаунт", "Account", "Konto", "Compte", "Cuenta", "Konto", "Hesap", "Conta", "Conta", "アカウント"],
+        "storage" => ["Хранилище", "Storage", "Speicher", "Stockage", "Almacenamiento", "Pamięć", "Depolama", "Armazenamento", "Armazenamento", "ストレージ"],
+        "security" => ["Безопасность", "Security", "Sicherheit", "Sécurité", "Seguridad", "Bezpieczeństwo", "Güvenlik", "Segurança", "Segurança", "セキュリティ"],
+        "updates" => ["Обновления", "Updates", "Updates", "Mises à jour", "Actualizaciones", "Aktualizacje", "Güncellemeler", "Atualizações", "Atualizações", "更新"],
+        "journal" => ["Журнал", "Logs", "Protokoll", "Journal", "Registro", "Dziennik", "Günlük", "Registro", "Registro", "ログ"],
+        _ => ["", "", "", "", "", "", "", "", "", ""],
+    };
+    values[index]
 }
 
 fn configure_style(ctx: &egui::Context, accent: Color32) {
