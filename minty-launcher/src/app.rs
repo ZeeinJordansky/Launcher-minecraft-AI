@@ -1314,6 +1314,43 @@ impl MintyApp {
                         });
                     });
                     ui.add_space(10.0);
+                    ui.label(RichText::new("КАТАЛОГ ПРОЕКТОВ").size(9.0).strong().color(MUTED));
+                    let mut category_changed = false;
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, category) in [
+                            ("Моды", "mod"), ("Модпаки", "modpack"),
+                            ("Ресурспаки", "resourcepack"), ("Шейдеры", "shader"),
+                        ] {
+                            let selected = self.mod_category == category;
+                            if ui.add(egui::Button::new(RichText::new(label).strong().color(if selected { TEXT } else { MUTED }))
+                                .fill(if selected { PANEL_LIGHT } else { BG }).rounding(Rounding::same(8.0))).clicked() {
+                                self.mod_category = category.to_owned();
+                                category_changed = true;
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Сортировка").size(10.0).color(MUTED));
+                        egui::ComboBox::from_id_source("mod_catalogue_sort")
+                            .selected_text(match self.mod_sort.as_str() {
+                                "follows" => "По подпискам",
+                                "newest" => "Сначала новые",
+                                "updated" => "Недавно обновлены",
+                                "relevance" => "По релевантности",
+                                _ => "По загрузкам",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.mod_sort, "downloads".to_owned(), "По загрузкам");
+                                ui.selectable_value(&mut self.mod_sort, "follows".to_owned(), "По подпискам");
+                                ui.selectable_value(&mut self.mod_sort, "newest".to_owned(), "Сначала новые");
+                                ui.selectable_value(&mut self.mod_sort, "updated".to_owned(), "Недавно обновлены");
+                                ui.selectable_value(&mut self.mod_sort, "relevance".to_owned(), "По релевантности");
+                            });
+                    });
+                    if category_changed {
+                        self.mod_search.clear();
+                        self.search_mod_store();
+                    }
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut self.mod_search)
                             .desired_width(350.0).hint_text("Найти мод: Sodium, JEI, Xaero's…"));
@@ -1355,23 +1392,32 @@ impl MintyApp {
                             ui.horizontal(|ui| {
                                 let (rect, _) = ui.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
                                 ui.painter().rect_filled(rect, Rounding::same(9.0), PANEL_LIGHT);
-                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "M",
+                                let mark = project.title.chars().next().unwrap_or('M').to_uppercase().to_string();
+                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, mark,
                                     FontId::proportional(22.0), self.accent_color());
                                 ui.add_space(6.0);
                                 ui.vertical(|ui| {
                                     ui.label(RichText::new(&project.title).strong().color(TEXT).size(13.0));
                                     let description: String = project.description.chars().take(115).collect();
                                     ui.label(RichText::new(description).size(10.0).color(MUTED));
-                                    ui.label(RichText::new(format!("{} загрузок", project.downloads)).size(9.0).color(self.accent_color()));
+                                    ui.label(RichText::new(format!("{} загрузок · {}", project.downloads, project.project_type))
+                                        .size(9.0).color(self.accent_color()));
+                                    if let Some(version) = &project.latest_version {
+                                        ui.label(RichText::new(format!("Последняя версия: {version}")).size(9.0).color(MUTED));
+                                    }
                                 });
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.add_enabled(!self.mod_installing,
-                                        egui::Button::new(if self.mod_installing { "Установка…" } else { "Установить" })
-                                            .rounding(Rounding::same(8.0))).clicked() {
-                                        requested = Some(project.slug.clone());
+                                    if self.mod_category == "mod" {
+                                        if ui.add_enabled(!self.mod_installing,
+                                            egui::Button::new(if self.mod_installing { "Установка…" } else { "Установить" })
+                                                .rounding(Rounding::same(8.0))).clicked() {
+                                            requested = Some(project.slug.clone());
+                                        }
+                                    } else if ui.small_button("Открыть проект").clicked() {
+                                        let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug));
                                     }
                                     if ui.small_button("Страница ↗").clicked() {
-                                        let _ = open::that(format!("https://modrinth.com/mod/{}", project.slug));
+                                        let _ = open::that(format!("https://modrinth.com/{}/{}", self.mod_category, project.slug));
                                     }
                                 });
                             });
@@ -1419,7 +1465,7 @@ impl MintyApp {
                     });
                 });
             ui.add_space(8.0);
-            ui.label(RichText::new("Список и поиск внутри Minty используют Modrinth. Прямая загрузка через CurseForge API требует отдельного ключа; пока сервис открывается на официальной странице.")
+            ui.label(RichText::new("Встроенный каталог и поиск работают через Modrinth: моды устанавливаются напрямую, а сборки, ресурспаки и шейдеры открываются на странице проекта. CurseForge открывается официальным каталогом в браузере — его API требует отдельного ключа разработчика.")
                 .size(9.0).color(MUTED));
         });
     }
