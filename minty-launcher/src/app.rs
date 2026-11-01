@@ -1208,28 +1208,42 @@ impl MintyApp {
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(8.0);
-            egui::Frame::none().fill(Color32::from_rgb(23, 32, 35))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(48, 67, 65)))
-                .rounding(Rounding::same(19.0)).inner_margin(egui::Margin::same(22.0))
+            egui::Frame::none().fill(Color32::from_rgb(22, 36, 37))
+                .stroke(Stroke::new(1.0, Color32::from_rgb(53, 79, 72)))
+                .rounding(Rounding::same(22.0)).inner_margin(egui::Margin::symmetric(26.0, 23.0))
                 .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    let hero_rect = ui.min_rect();
+                    ui.painter().circle_filled(
+                        egui::pos2(hero_rect.right() - 74.0, hero_rect.center().y),
+                        118.0,
+                        Color32::from_rgba_unmultiplied(
+                            self.accent_color().r(), self.accent_color().g(), self.accent_color().b(), 15,
+                        ),
+                    );
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("MINTY LAUNCHER  /  JAVA + BEDROCK").size(9.0).strong().color(self.accent_color()));
-                            ui.add_space(9.0);
-                            ui.label(RichText::new("Твоя библиотека Minecraft.").size(29.0).strong().color(TEXT));
+                            egui::Frame::none().fill(Color32::from_rgb(31, 57, 48))
+                                .rounding(Rounding::same(20.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("MINTY  /  JAVA + BEDROCK").size(9.0).strong().color(self.accent_color()));
+                                });
+                            ui.add_space(11.0);
+                            ui.label(RichText::new("Твоя библиотека Minecraft.").size(30.0).strong().color(TEXT));
                             ui.add_space(5.0);
                             ui.label(RichText::new("Сборки, моды и игровые профили — в одном месте.").size(13.0).color(MUTED));
-                            ui.add_space(12.0);
+                            ui.add_space(14.0);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("●").color(self.accent_color()).size(10.0));
-                                ui.label(RichText::new("Локальные сборки").size(10.0).color(TEXT));
-                                ui.add_space(10.0);
+                                ui.label(RichText::new("Локальные сборки").size(10.5).color(TEXT));
+                                ui.add_space(14.0);
                                 ui.label(RichText::new("●").color(self.accent_color()).size(10.0));
-                                ui.label(RichText::new("Изоляция профилей").size(10.0).color(TEXT));
+                                ui.label(RichText::new("Изоляция профилей").size(10.5).color(TEXT));
                             });
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.add(egui::Image::new(&self.logo_texture).fit_to_exact_size(egui::vec2(104.0, 104.0)));
+                            ui.add(egui::Image::new(&self.logo_texture).fit_to_exact_size(egui::vec2(116.0, 116.0)));
                         });
                     });
                 });
@@ -1283,9 +1297,9 @@ impl MintyApp {
                             let play = egui::Button::new(RichText::new(if self.launch_busy { "ПОДГОТОВКА…" } else { "▶  ИГРАТЬ" })
                                 .size(14.0).strong().color(Color32::from_rgb(15, 35, 28)))
                                 .fill(self.accent_color()).min_size(egui::vec2(178.0, 48.0)).rounding(Rounding::same(11.0));
-                            if ui.add_enabled(!installed.is_empty() && !self.launch_busy && !self.install_busy, play).clicked() {
-                                self.start_game();
-                            }
+                            let play_response = ui.add_enabled(!installed.is_empty() && !self.launch_busy && !self.install_busy, play);
+                            paint_hover_feedback(ui, &play_response, self.accent_color(), 11.0);
+                            if play_response.clicked() { self.start_game(); }
                         });
                     });
                     if self.launch_busy {
