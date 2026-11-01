@@ -46,7 +46,7 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=0.2.0" "scripts/installer/MintySetup.iss"
+          & $iscc "/DAppVersion=0.2.1" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
       - name: Verify installer and application
         shell: pwsh
@@ -58,10 +58,10 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.0
-          name: Minty Launcher v0.2.0
+          tag_name: v0.2.1
+          name: Minty Launcher v0.2.1
           body: |
-            Minty Launcher v0.2.0 for Windows 10/11 x64.
+            Minty Launcher v0.2.1 for Windows 10/11 x64.
 
             Recommended: MintyLauncher-Setup.exe. The multilingual wizard supports Russian/English, license acceptance, install directory, Desktop and Start menu shortcuts, Windows uninstall registration, disk-space and running-instance checks, and optional launch after installation.
 
