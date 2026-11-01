@@ -1,0 +1,12 @@
+/target/
+/dist/
+*.log
+*.tmp
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.minty-backup
+*.minty-created
+*.minty-download
+*.minty-tmp
