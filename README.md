@@ -1,46 +1,36 @@
 # Minty Launcher
 
-Minty Launcher — настольный лаунчер Minecraft Java Edition для Windows 10/11 x64.
+**Windows download:** [minty-launcher.exe — latest GitHub Release](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/minty-launcher.exe)
 
-## Скачать
+Download that single EXE and launch it with a double-click. The app does not require the user to open a terminal, install Rust, install a JDK, or manually configure Java. A compatible Java Runtime is downloaded automatically by the launcher when needed for the selected Minecraft version.
 
-После успешной сборки лаунчер публикует установочный исполняемый файл в GitHub Releases:
+## What is in the launcher
 
-- [Скачать MintyLauncher.exe](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/MintyLauncher.exe)
-- [Скачать архив исходного кода](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/Minty-Launcher-source.tar.xz)
+- Minecraft Java Edition Vanilla release selection and installation.
+- Verified downloads for official client JAR, libraries, natives and assets.
+- Automatic Java Runtime installation for the selected Minecraft version.
+- Microsoft Device Code sign-in, with Xbox/XSTS/Minecraft profile validation. Online sign-in requires a Microsoft OAuth Client ID configured in launcher settings.
+- Offline profile for single-player use.
+- Skin Studio: import, draw/edit pixels and export 64×64 PNG skins (legacy 64×32 import is supported).
+- Optional “Слабый ПК” profile: conservative graphics options, lower render/simulation distances, fewer particles, capped FPS and a lower Java memory target.
+- Custom Minecraft game directory selection.
+- Settings and launcher event log.
+- Dark interface with mint accents.
 
-## Возможности
+## Important notes
 
-- Установка официальных Vanilla-релизов Minecraft Java Edition.
-- Загрузка client JAR, библиотек, native-библиотек и игровых ресурсов с проверкой опубликованных Mojang SHA-1.
-- Автоматическая установка подходящей Java Runtime (Temurin).
-- Вход Microsoft с проверкой Xbox Live, XSTS и профиля Minecraft Java Edition. Для него требуется настроить собственный OAuth Client ID.
-- Офлайн-профиль для одиночной игры.
-- **Skin Studio:** создание и редактирование скина 64×64, импорт и экспорт PNG; отдельный Microsoft-вход не нужен.
-- **«Слабый ПК»:** сниженные графические настройки Minecraft, ограничение памяти Java до 2 ГБ, более щадящие JVM-параметры и менее частая перерисовка интерфейса.
-- Выбор пользовательского каталога установки Minecraft.
-- Журнал событий лаунчера и настройки Java/памяти.
-- Тёмный интерфейс с мятной цветовой темой.
+Skin Studio edits and exports a local PNG. Vanilla Minecraft does not automatically apply a local PNG to an offline profile; displaying that skin in-game requires a compatible local-skin mod. Online skins remain managed by the official Minecraft account.
 
-## Важные ограничения
+The “Слабый ПК” profile changes game settings and launch parameters, but cannot guarantee a specific FPS increase. The result depends on hardware, Minecraft version, drivers and the world being played.
 
-Skin Studio редактирует и экспортирует PNG. Чистый Vanilla Minecraft не применяет такой файл к офлайн-профилю автоматически: чтобы видеть собственный скин в самой игре, нужен совместимый мод загрузки локальных скинов. Для онлайн-профиля скин меняется через официальный аккаунт Microsoft/Minecraft.
+The first release supports Vanilla. Fabric, Forge and NeoForge are not yet integrated. File SHA-1 checks protect the integrity of supported official downloads; they are not an anti-cheat system.
 
-Режим «Слабый ПК» выставляет более лёгкие параметры графики и запуска, но не может гарантировать конкретный прирост FPS: результат зависит от процессора, видеокарты, памяти, версии игры и мира.
+## Open-source code
 
-Первая версия поддерживает Vanilla release; Fabric, Forge и NeoForge пока не подключены. Проверка SHA-1 нужна для контроля целостности официальных файлов и не является античитом. Сборка Windows не подписана сертификатом code signing.
+The source archive and project documentation are stored in this repository. The application binary is published separately as the `minty-launcher.exe` asset in Releases. GitHub also generates “Source code (zip)” and “Source code (tar.gz)” links automatically for each tag; those are repository snapshots, not the launcher executable.
 
-## Сборка из исходников
+## Build and test
 
-В архиве исходников находятся Rust-приложение, Java bootstrap и документация в `minty-launcher/docs/`. Для самостоятельной сборки требуются Windows 10/11 x64, Rust stable + MSVC Build Tools и JDK 21.
+The Windows workflow builds the application for `x86_64-pc-windows-msvc`. JDK 21 is needed only on the build runner to compile the small Java bootstrap class embedded into the executable. End users do not need a JDK. The launcher downloads the required Java Runtime on first launch of a Minecraft version.
 
-Из папки `minty-launcher`:
-
-```cmd
-cargo test --all-targets --target x86_64-pc-windows-msvc
-cargo build --release --target x86_64-pc-windows-msvc
-```
-
-Исполняемый файл: `target/x86_64-pc-windows-msvc/release/minty-launcher.exe`.
-
-Исходный код автоматически собирается Windows GitHub Actions. Публикация Release происходит только после успешных тестов и сборки.
+Release publication is gated by `cargo test` and a successful Windows release build.

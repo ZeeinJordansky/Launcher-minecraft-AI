@@ -12,13 +12,15 @@ permissions:
 
 jobs:
   build:
-    name: Windows x64 tests and build
+    name: Windows x64 tests and single-file build
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Rebuild source archive from committed parts
+      - name: Rebuild source archive
         shell: bash
         run: |
           python - <<'PY'
@@ -34,7 +36,7 @@ jobs:
       - name: Extract source archive
         run: tar -xf Minty-Launcher-source.tar.xz
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21 (build-time only)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -49,13 +51,21 @@ jobs:
         working-directory: minty-launcher
         run: cargo test --all-targets --target x86_64-pc-windows-msvc
 
-      - name: Build Windows executable
+      - name: Build one-file executable
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Upload executable artifact
+      - name: Verify executable
+        shell: bash
+        run: |
+          exe="minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe"
+          test -s "$exe"
+          test "$(wc -c < "$exe")" -gt 1048576
+          sha256sum "$exe"
+
+      - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: MintyLauncher-windows-x64
+          name: minty-launcher-windows-x64
           path: minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
           if-no-files-found: error

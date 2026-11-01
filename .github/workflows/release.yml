@@ -10,13 +10,15 @@ permissions:
 
 jobs:
   release:
-    name: Build and publish Windows executable
+    name: Test, build and publish minty-launcher.exe
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Rebuild source archive from committed parts
+      - name: Rebuild source archive
         shell: bash
         run: |
           python - <<'PY'
@@ -32,7 +34,7 @@ jobs:
       - name: Extract source archive
         run: tar -xf Minty-Launcher-source.tar.xz
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21 (build-time only)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -43,22 +45,25 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Run tests before release
+      - name: Run tests before publishing
         working-directory: minty-launcher
         run: cargo test --all-targets --target x86_64-pc-windows-msvc
 
-      - name: Build Windows x64 executable
+      - name: Build self-contained Windows executable
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Prepare release assets
+      - name: Stage exactly one application file
         shell: bash
         run: |
           mkdir -p dist
-          cp minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/MintyLauncher.exe
-          cp Minty-Launcher-source.tar.xz dist/Minty-Launcher-source.tar.xz
+          built="minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe"
+          test -s "$built"
+          cp "$built" dist/minty-launcher.exe
+          test "$(wc -c < dist/minty-launcher.exe)" -gt 1048576
+          sha256sum dist/minty-launcher.exe
 
-      - name: Publish GitHub Release
+      - name: Publish executable-only GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.${{ github.run_number }}
@@ -66,10 +71,8 @@ jobs:
           body: |
             Minty Launcher for Windows 10/11 x64.
 
-            Download MintyLauncher.exe below. The executable was compiled on a Windows runner after the test suite passed.
+            Download the minty-launcher.exe asset and run it with a double-click. No terminal commands or separately installed Java are required from the user; the launcher downloads a compatible Java Runtime on first game launch.
           generate_release_notes: true
-          files: |
-            dist/MintyLauncher.exe
-            dist/Minty-Launcher-source.tar.xz
+          files: dist/minty-launcher.exe
           fail_on_unmatched_files: true
           make_latest: true
