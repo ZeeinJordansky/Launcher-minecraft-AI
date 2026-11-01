@@ -550,7 +550,7 @@ impl MintyApp {
                 "Укажи Microsoft OAuth Client ID в настройках. Без него официальный вход недоступен."
                     .to_owned(),
             );
-            self.page = Page::Settings;
+            self.switch_page(Page::Settings);
             return;
         }
         if self.auth_busy {
@@ -2045,10 +2045,10 @@ fn scan_installed_profiles(game_dir: &std::path::Path) -> Vec<InstalledProfile> 
         let base = root.join(&game_version);
         if !base.join(format!("{game_version}.json")).is_file() || !base.join(format!("{game_version}.jar")).is_file() { continue; }
         let lower = id.to_ascii_lowercase();
-        let loader = if lower.starts_with("fabric-loader-") { "Fabric" }
-            else if lower.starts_with("neoforge-") { "NeoForge" }
-            else if lower.starts_with("forge-") { "Forge" }
-            else if lower.starts_with("quilt-loader-") { "Quilt" }
+        let loader = if lower.contains("neoforge") { "NeoForge" }
+            else if lower.contains("forge") { "Forge" }
+            else if lower.contains("fabric") { "Fabric" }
+            else if lower.contains("quilt") { "Quilt" }
             else { "Vanilla" };
         result.push(InstalledProfile { id, game_version, loader: loader.to_owned() });
     }
