@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod bedrock;
+mod mods;
 mod auth;
 mod config;
 mod minecraft;
