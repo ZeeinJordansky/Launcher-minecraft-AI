@@ -20,6 +20,38 @@ struct AdoptiumPackage {
     checksum: Option<String>,
 }
 
+/// Detect an already installed Java runtime. This does not download or pin it.
+pub fn find_installed_java(runtime_root: &Path) -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("JAVA_HOME").map(PathBuf::from) {
+        let candidate = normalize_java_executable(home);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    if let Ok(path) = find_on_path() {
+        return Some(path);
+    }
+    if let Some(java) = find_java_executable(runtime_root) {
+        return Some(java);
+    }
+
+    #[cfg(windows)]
+    {
+        for root in [
+            std::env::var_os("ProgramFiles").map(PathBuf::from),
+            std::env::var_os("ProgramFiles(x86)").map(PathBuf::from),
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        ].into_iter().flatten() {
+            for vendor in ["Java", "Eclipse Adoptium", "Microsoft", "Amazon Corretto"] {
+                if let Some(java) = find_java_executable(&root.join(vendor)) {
+                    return Some(java);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn ensure_java(required_major: u32, custom_path: &str, runtime_root: &Path) -> Result<PathBuf> {
     if !custom_path.trim().is_empty() {
         let custom = normalize_java_executable(PathBuf::from(custom_path.trim()));

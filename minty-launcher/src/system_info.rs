@@ -1,4 +1,59 @@
-use std::thread;
+use std::{thread, time::Instant};
+
+#[derive(Debug, Clone)]
+pub struct BenchmarkResult {
+    pub cpu_operations_per_second: u64,
+    pub memory_mb_per_second: u64,
+    pub logical_threads: usize,
+    pub elapsed_ms: u64,
+}
+
+/// Runs a short CPU and memory microbenchmark. It reports measured throughput,
+/// not a guessed Minecraft FPS value.
+pub fn run_benchmark() -> BenchmarkResult {
+    let logical_threads = thread::available_parallelism().map(|v| v.get()).unwrap_or(1).min(16);
+    let cpu_start = Instant::now();
+    let operations = thread::scope(|scope| {
+        let handles: Vec<_> = (0..logical_threads).map(|thread_id| {
+            let start = cpu_start;
+            scope.spawn(move || {
+                let mut state = (thread_id as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15);
+                let mut count = 0u64;
+                while start.elapsed().as_millis() < 550 {
+                    state ^= state >> 12;
+                    state ^= state << 25;
+                    state ^= state >> 27;
+                    state = state.wrapping_mul(0x2545F4914F6CDD1D);
+                    count = count.wrapping_add(1);
+                    std::hint::black_box(state);
+                }
+                count
+            })
+        }).collect();
+        handles.into_iter().map(|handle| handle.join().unwrap_or(0)).sum::<u64>()
+    });
+    let cpu_elapsed = cpu_start.elapsed();
+    let cpu_seconds = cpu_elapsed.as_secs_f64().max(0.001);
+
+    let mut memory = vec![0u64; 256 * 1024]; // 2 MiB working set.
+    let memory_start = Instant::now();
+    for pass in 0..24u64 {
+        for (index, value) in memory.iter_mut().enumerate() {
+            *value = value.wrapping_add((index as u64).wrapping_mul(pass + 1)).rotate_left(3);
+        }
+        std::hint::black_box(&memory);
+    }
+    let memory_elapsed = memory_start.elapsed().as_secs_f64().max(0.001);
+    let transferred = memory.len() as u64 * std::mem::size_of::<u64>() as u64 * 24;
+
+    BenchmarkResult {
+        cpu_operations_per_second: (operations as f64 / cpu_seconds) as u64,
+        memory_mb_per_second: ((transferred as f64 / (1024.0 * 1024.0)) / memory_elapsed) as u64,
+        logical_threads,
+        elapsed_ms: cpu_elapsed.as_millis() as u64 + (memory_elapsed * 1000.0) as u64,
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct HardwareInfo {
