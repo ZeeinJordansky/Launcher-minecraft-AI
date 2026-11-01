@@ -1046,7 +1046,7 @@ impl MintyApp {
                     ui.add_space(14.0);
                     // Reserve the exact width of all three controls and the right inset.
                     // The drag region therefore never pushes controls beyond the window edge.
-                    let controls_width = 3.0 * 42.0 + 3.0 * 6.0 + 12.0;
+                    let controls_width = 3.0 * 42.0 + 3.0 * 6.0 + 18.0;
                     let drag_width = (ui.available_width() - controls_width).max(90.0);
                     let (drag_rect, drag_response) = ui.allocate_exact_size(
                         egui::vec2(drag_width, 42.0), egui::Sense::click_and_drag()
@@ -1144,12 +1144,8 @@ impl MintyApp {
                                         ui.add_sized([136.0, 18.0],
                                             egui::Label::new(RichText::new(name).strong().color(TEXT).size(11.5)).truncate());
                                         ui.horizontal(|ui| {
-                                            ui.painter().circle_filled(
-                                                ui.next_widget_position() + egui::vec2(4.0, 6.0),
-                                                3.0,
-                                                if self.account.is_some() { self.accent_color() } else { MUTED },
-                                            );
-                                            ui.add_space(5.0);
+                                            ui.label(RichText::new("●").size(7.0)
+                                                .color(if self.account.is_some() { self.accent_color() } else { MUTED }));
                                             ui.label(RichText::new(if self.account.is_some() {
                                                 self.ui_label("microsoft")
                                             } else {
