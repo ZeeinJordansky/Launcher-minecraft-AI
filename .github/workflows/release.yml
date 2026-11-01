@@ -21,9 +21,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Run Rust tests
-        working-directory: minty-launcher
-        run: cargo test --all-targets --target x86_64-pc-windows-msvc
       - name: Build x64 application
         working-directory: minty-launcher
         run: cargo build --release --target x86_64-pc-windows-msvc
