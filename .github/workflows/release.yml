@@ -87,7 +87,6 @@ jobs:
         with:
           tag_name: v0.6.0
           name: Minty Launcher v0.6.0
-          overwrite_files: true
           body: |
             Minty Launcher v0.6.0 for Windows 10/11 x64.
 
