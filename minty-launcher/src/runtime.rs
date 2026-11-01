@@ -3,6 +3,15 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{fs, io::{Read, Write}, path::{Path, PathBuf}, process::Command, time::Duration};
+
+/// Prevent console flash when probing Java or resolving executables on Windows.
+fn hide_console(command: &mut Command) {
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
 use zip::ZipArchive;
 
 #[derive(Deserialize)]
@@ -95,17 +104,26 @@ fn find_on_path() -> Result<PathBuf> {
     let candidate = PathBuf::from("java.exe");
     #[cfg(not(windows))]
     let candidate = PathBuf::from("java");
-    let output = Command::new(&candidate).arg("-version").output()?;
+    let mut probe = Command::new(&candidate);
+    probe.arg("-version");
+    hide_console(&mut probe);
+    let output = probe.output()?;
     if !output.status.success() {
         bail!("Java не найдена в PATH");
     }
-    // Resolve the executable from PATH using where/which for a stable path.
+    // Resolve the executable from PATH using where/which without spawning a visible shell.
     #[cfg(windows)]
-    let resolver = Command::new("where").arg("java.exe").output()?;
+    let mut resolver = Command::new("where");
     #[cfg(not(windows))]
-    let resolver = Command::new("which").arg("java").output()?;
-    let first = String::from_utf8_lossy(&resolver.stdout).lines().next().unwrap_or("java").trim().to_owned();
-    Ok(PathBuf::from(first))
+    let mut resolver = Command::new("which");
+    #[cfg(windows)]
+    resolver.arg("java.exe");
+    #[cfg(not(windows))]
+    resolver.arg("java");
+    hide_console(&mut resolver);
+    let output = resolver.output()?;
+    let first = String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("java").trim().to_owned();
+    Ok(normalize_java_executable(PathBuf::from(first)))
 }
 
 fn version_probe_executable(java: &Path) -> PathBuf {
@@ -125,7 +143,10 @@ fn version_probe_executable(java: &Path) -> PathBuf {
 
 fn java_major(java: &Path) -> Result<u32> {
     let probe = version_probe_executable(java);
-    let output = Command::new(&probe).arg("-version").output()
+    let mut command = Command::new(&probe);
+    command.arg("-version");
+    hide_console(&mut command);
+    let output = command.output()
         .with_context(|| format!("Не удалось запустить Java для проверки версии: {}", probe.display()))?;
     let text = format!("{}\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout));
     let marker = text.split_once("version ").map(|(_, tail)| tail)
@@ -197,14 +218,17 @@ pub fn resolve_launch_executable(path: &Path) -> PathBuf {
 
 fn normalize_java_executable(path: PathBuf) -> PathBuf {
     if path.is_dir() {
-        let candidate = path.join("bin").join("java.exe");
-        if candidate.is_file() { return candidate; }
+        let bin = path.join("bin");
+        let windowless = bin.join("javaw.exe");
+        if windowless.is_file() { return windowless; }
+        let console = bin.join("java.exe");
+        if console.is_file() { return console; }
     }
-    let is_javaw = path.file_name().and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("javaw.exe")).unwrap_or(false);
-    if is_javaw {
-        let console_java = path.with_file_name("java.exe");
-        if console_java.is_file() { return console_java; }
+    let is_console_java = path.file_name().and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("java.exe")).unwrap_or(false);
+    if is_console_java {
+        let windowless = path.with_file_name("javaw.exe");
+        if windowless.is_file() { return windowless; }
     }
     path
 }
@@ -212,6 +236,7 @@ fn normalize_java_executable(path: PathBuf) -> PathBuf {
 fn find_java_executable(root: &Path) -> Option<PathBuf> {
     if !root.exists() { return None; }
     let mut stack = vec![root.to_path_buf()];
+    let mut java_fallback = None;
     let mut javaw_fallback = None;
     while let Some(dir) = stack.pop() {
         let entries = match fs::read_dir(dir) { Ok(entries) => entries, Err(_) => continue };
@@ -219,13 +244,13 @@ fn find_java_executable(root: &Path) -> Option<PathBuf> {
             let path = entry.path();
             if path.is_dir() { stack.push(path); continue; }
             match path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
-                "java.exe" => return Some(path),
+                "java.exe" if java_fallback.is_none() => java_fallback = Some(path),
                 "javaw.exe" if javaw_fallback.is_none() => javaw_fallback = Some(path),
                 _ => {}
             }
         }
     }
-    javaw_fallback.map(normalize_java_executable)
+    javaw_fallback.or(java_fallback).map(normalize_java_executable)
 }
 
 

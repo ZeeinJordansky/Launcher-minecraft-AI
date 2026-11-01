@@ -76,8 +76,9 @@ fn native_options(icon: Arc<eframe::egui::IconData>, renderer: eframe::Renderer)
     eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1120.0, 760.0])
-            .with_min_inner_size([900.0, 650.0])
+            .with_min_inner_size([960.0, 680.0])
             .with_title("Minty Launcher")
+            .with_decorations(false)
             .with_icon(icon),
         renderer,
         ..Default::default()

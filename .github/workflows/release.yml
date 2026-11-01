@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=0.4.0" "scripts/installer/MintySetup.iss"
+          & $iscc "/DAppVersion=0.5.0" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
 
       - name: Verify installer and application
@@ -73,30 +73,28 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.4.0
-          name: Minty Launcher v0.4.0
+          tag_name: v0.5.0
+          name: Minty Launcher v0.5.0
           body: |
-            Minty Launcher v0.4.0 for Windows 10/11 x64.
-
-            Русскоязычный интерфейс, этапный splash screen, библиотека только установленных профилей,
-            аватар справа, центрированный статус, анимации переходов и разделённые настройки.
-
-            Java Edition: изоляция миров, модов и настроек по профилям, выбор Java и GC,
-            полноэкранный запуск, каталог Modrinth с категориями и сортировкой, установка JAR-модов,
-            статическая проверка метаданных и Crash Reporter.
-
-            Skin Workshop: UV-атлас 64×64, кисть, ластик, заливка, пипетка, палитра,
-            зеркальное рисование, история отмены/повтора, импорт и экспорт PNG.
-
-            Производительность: замер CPU и пропускной способности памяти, а также режим «Слабый ПК».
-            Замер не выдаёт выдуманный прогноз FPS.
-
-            Bedrock: запуск установленного Stable/Preview и импорт .mcpack/.mcaddon/.mcworld.
-            Точную версию Bedrock контролирует Microsoft Store.
-
-            Ограничения: CurseForge API требует ключ; AppContainer-песочница и загрузка скинов
-            в Microsoft/Ely.by пока не реализованы. Не запускайте непроверенные моды.
-            EXE не подписан Authenticode и может вызвать предупреждение SmartScreen.
+              Minty Launcher v0.5.0 for Windows 10/11 x64.
+  
+              Полностью обновлённый визуальный стиль, собственная акцентная рамка окна, новая иконка,
+              выровненный каталог модов и улучшенный редактор скинов.
+  
+              Фоновые проверки Java и запуск игры не открывают консольные окна.
+              В настройках доступны 10 языков интерфейса, выбор запуска обновлений и поведение после запуска игры.
+  
+              Skin Workshop: UV-атлас 64×64, кисть, ластик, заливка, пипетка, размер и прозрачность кисти,
+              зеркальное рисование, отражение текстуры, сетка, отображение внешнего слоя, предпросмотр,
+              история отмены/повтора, локальное сохранение, PNG импорт/экспорт.
+  
+              Modrinth: адаптивная двухколоночная сетка, единый размер карточек и действий,
+              сортировка, категории и установка совместимых JAR-модов.
+  
+              Ограничения: переводы пока покрывают навигацию и ключевые разделы, технические описания
+              могут оставаться на русском. Публикация скина через Microsoft/Mojang или Ely.by не подключена.
+              AppContainer-песочница не реализована; не запускайте непроверенные моды.
+              EXE не подписан Authenticode и может вызвать предупреждение SmartScreen.
           generate_release_notes: true
           files: |
             dist/MintyLauncher-Setup.exe

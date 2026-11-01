@@ -39,3 +39,13 @@
 
 Подробности сборки: [docs/BUILDING.md](docs/BUILDING.md).  
 MIT License — см. LICENSE.
+
+
+## v0.5.0
+
+- Frameless Minty title bar with accent-colored window controls.
+- Background Java checks and game process launch run without flashing console windows.
+- Unified Modrinth project cards and consistent action buttons.
+- Improved Skin Workshop with opacity, grid/overlay toggles, horizontal flip, local skin save and keyboard-friendly history controls.
+- Ten UI language choices for navigation and main sections.
+- Click the account avatar to jump directly to the profile and skin editor.
