@@ -794,6 +794,8 @@ impl MintyApp {
                     .inner_margin(egui::Margin::same(15.0)).show(&mut columns[1], |ui| {
                         ui.label(RichText::new("ТВОЙ КОМПЬЮТЕР").size(9.0).strong().color(MUTED));
                         ui.add_space(7.0);
+                        ui.label(RichText::new(&self.hardware.cpu_name).size(11.0).strong().color(TEXT));
+                        ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(format!("{} GB", self.hardware.total_memory_gb)).size(21.0).strong().color(TEXT));
@@ -1158,6 +1160,8 @@ impl MintyApp {
                     .inner_margin(egui::Margin::same(16.0)).show(&mut columns[0], |ui| {
                         ui.label(RichText::new("ПРОИЗВОДИТЕЛЬНОСТЬ").size(9.0).strong().color(MUTED));
                         ui.add_space(8.0);
+                        ui.label(RichText::new(&self.hardware.cpu_name).size(11.0).strong().color(TEXT));
+                        ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(format!("{} GB", self.hardware.total_memory_gb)).size(22.0).strong().color(TEXT));
