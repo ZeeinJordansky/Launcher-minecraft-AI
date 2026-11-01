@@ -1309,15 +1309,23 @@ impl MintyApp {
                     ui.label(RichText::new(bedrock::installed_data_hint()).size(11.0).color(MUTED));
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        if ui.add_sized([220.0, 43.0],
+                        if ui.add_sized([205.0, 43.0],
                             egui::Button::new(RichText::new("▶  Запустить Bedrock").strong().color(Color32::from_rgb(15, 35, 28)))
                                 .fill(self.accent_color()).rounding(Rounding::same(10.0))).clicked() {
-                            match bedrock::launch() {
-                                Ok(()) => self.log("Передана команда запуска Minecraft Bedrock."),
+                            match bedrock::launch(false) {
+                                Ok(()) => self.log("Запускаю Minecraft Bedrock Stable."),
                                 Err(error) => self.error = Some(format!("{error:#}")),
                             }
                         }
-                        if ui.button("Открыть Microsoft Store").clicked() {
+                        if ui.add_sized([195.0, 43.0],
+                            egui::Button::new(RichText::new("Запустить Preview").strong().color(TEXT))
+                                .fill(PANEL_LIGHT).rounding(Rounding::same(10.0))).clicked() {
+                            match bedrock::launch(true) {
+                                Ok(()) => self.log("Запускаю Minecraft Preview."),
+                                Err(error) => self.error = Some(format!("{error:#}")),
+                            }
+                        }
+                        if ui.button("Microsoft Store").clicked() {
                             if let Err(error) = bedrock::open_store_search() { self.error = Some(format!("{error:#}")); }
                         }
                         if ui.button("Импортировать дополнение").clicked() { self.import_bedrock_files(); }

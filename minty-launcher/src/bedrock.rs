@@ -51,9 +51,15 @@ pub fn com_mojang_dir(preview: bool) -> Option<PathBuf> {
     None
 }
 
-pub fn launch() -> Result<()> {
-    open::that("minecraft:")
-        .context("Не удалось открыть Minecraft Bedrock. Проверь, что Minecraft for Windows установлен из Microsoft Store.")
+pub fn launch(preview: bool) -> Result<()> {
+    let uri = if preview { "minecraft-preview://" } else { "minecraft://" };
+    open::that(uri).with_context(|| {
+        if preview {
+            "Не удалось открыть Minecraft Preview. Проверь, что Preview установлена через Microsoft Store."
+        } else {
+            "Не удалось открыть Minecraft Bedrock. Проверь, что Minecraft for Windows установлен из Microsoft Store."
+        }
+    })
 }
 
 pub fn import_addon(path: &Path) -> Result<()> {
