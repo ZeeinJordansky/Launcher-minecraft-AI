@@ -76,9 +76,25 @@ fn find_on_path() -> Result<PathBuf> {
     Ok(PathBuf::from(first))
 }
 
+fn version_probe_executable(java: &Path) -> PathBuf {
+    let is_javaw = java.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("javaw.exe"))
+        .unwrap_or(false);
+
+    if is_javaw {
+        let console_java = java.with_file_name("java.exe");
+        if console_java.is_file() {
+            return console_java;
+        }
+    }
+    java.to_path_buf()
+}
+
 fn java_major(java: &Path) -> Result<u32> {
-    let output = Command::new(java).arg("-version").output()
-        .with_context(|| format!("Не удалось запустить Java: {}", java.display()))?;
+    let probe = version_probe_executable(java);
+    let output = Command::new(&probe).arg("-version").output()
+        .with_context(|| format!("Не удалось запустить Java для проверки версии: {}", probe.display()))?;
     let text = format!("{}\n{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout));
     let marker = text.split_once("version ").map(|(_, tail)| tail)
         .or_else(|| text.split_once("openjdk ").map(|(_, tail)| tail))
@@ -158,4 +174,51 @@ fn find_java_executable(root: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::version_probe_executable;
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_dir() -> PathBuf {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("minty-java-probe-{}-{stamp}", std::process::id()))
+    }
+
+    #[test]
+    fn javaw_version_probe_uses_sibling_java_exe() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let javaw = dir.join("javaw.exe");
+        let java = dir.join("java.exe");
+        fs::write(&javaw, b"stub").unwrap();
+        fs::write(&java, b"stub").unwrap();
+
+        assert_eq!(version_probe_executable(&javaw), java);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn javaw_version_probe_falls_back_if_console_java_is_missing() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let javaw = dir.join("javaw.exe");
+        fs::write(&javaw, b"stub").unwrap();
+
+        assert_eq!(version_probe_executable(&javaw), javaw);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn regular_java_executable_is_used_for_version_probe() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let java = dir.join("java.exe");
+        fs::write(&java, b"stub").unwrap();
+
+        assert_eq!(version_probe_executable(&java), java);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
