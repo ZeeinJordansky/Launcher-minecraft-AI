@@ -19,11 +19,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-const BG: Color32 = Color32::from_rgb(18, 18, 19);
-const SIDEBAR: Color32 = Color32::from_rgb(30, 30, 31);
-const PANEL: Color32 = Color32::from_rgb(38, 39, 40);
-const PANEL_LIGHT: Color32 = Color32::from_rgb(60, 61, 63);
-const MINT: Color32 = Color32::from_rgb(82, 165, 53);
+const BG: Color32 = Color32::from_rgb(13, 19, 24);
+const SIDEBAR: Color32 = Color32::from_rgb(18, 26, 30);
+const PANEL: Color32 = Color32::from_rgb(25, 35, 40);
+const PANEL_LIGHT: Color32 = Color32::from_rgb(39, 52, 57);
+const MINT: Color32 = Color32::from_rgb(105, 220, 178);
 #[allow(dead_code)]
 const MINT_DARK: Color32 = Color32::from_rgb(52, 112, 34);
 const TEXT: Color32 = Color32::from_rgb(240, 240, 240);
@@ -156,9 +156,9 @@ pub struct MintyApp {
 impl MintyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut config = config::load().unwrap_or_default();
-        if config.accent_color == [145, 226, 183] {
-            // v1.7.0 switches the default accent to the official launcher green.
-            config.accent_color = [82, 165, 53];
+        if config.accent_color == [145, 226, 183] || config.accent_color == [82, 165, 53] {
+            // v1.8.0 replaces the legacy default accent with Minty's own mint tone.
+            config.accent_color = [105, 220, 178];
             let _ = config::save(&config);
         }
         cc.egui_ctx.set_pixels_per_point(config.ui_scale.clamp(0.80, 1.50));
@@ -1105,12 +1105,9 @@ impl MintyApp {
                 Color32::WHITE,
             );
         } else {
-            let name = self.account.as_ref().map(|account| account.name.as_str())
-                .unwrap_or(self.config.offline_username.as_str());
-            let initial = name.chars().next().unwrap_or('M').to_uppercase().to_string();
-            ui.painter().circle_filled(center, radius, self.accent_color());
-            ui.painter().text(center, egui::Align2::CENTER_CENTER, initial,
-                FontId::proportional(size * 0.42), Color32::from_rgb(16, 30, 27));
+            let logo_rect = egui::Rect::from_center_size(center, egui::vec2(size * 0.88, size * 0.88));
+            ui.painter().image(self.logo_texture.id(), logo_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
         }
         // Keep the outline circular; the texture itself is alpha-masked to the same shape.
         ui.painter().circle_stroke(
@@ -1503,10 +1500,13 @@ impl MintyApp {
             .show(ui, |card| {
                 card.set_min_width(card.available_width());
                 let total = card.available_width();
-                let icon_size = 76.0;
+                let compact = total < 450.0;
+                let icon_size = if compact { 56.0 } else { 76.0 };
                 let actions_width = 142.0;
-                let gap = 12.0;
-                let details_width = (total - icon_size - actions_width - gap * 2.0).max(120.0);
+                let gap = if compact { 8.0 } else { 12.0 };
+                let action_column_width = if compact { 0.0 } else { actions_width };
+                let column_gaps = if compact { 1.0 } else { 2.0 };
+                let details_width = (total - icon_size - action_column_width - gap * column_gaps).max(1.0);
                 card.horizontal_top(|row| {
                     row.spacing_mut().item_spacing.x = gap;
                     // 1. Project picture
@@ -1553,28 +1553,56 @@ impl MintyApp {
                     });
 
                     // 3. Actions
-                    row.allocate_ui_with_layout(egui::vec2(actions_width, icon_size), Layout::top_down(Align::Center), |actions| {
-                        actions.spacing_mut().item_spacing.y = 5.0;
+                    if !compact {
+                        row.allocate_ui_with_layout(egui::vec2(actions_width, icon_size), Layout::top_down(Align::Center), |actions| {
+                            actions.spacing_mut().item_spacing.y = 5.0;
+                            let open_only = self.mod_category == "modpack";
+                            let busy = self.mod_installing;
+                            let label = if open_only { "Открыть ↗" } else if busy { "Установка…" }
+                                else if self.mod_category == "world" { "Импортировать" } else { "Установить" };
+                            if mc_button(actions, label, egui::vec2(actions_width, 32.0), 12.5, !busy, !open_only).clicked() {
+                                if open_only { let _ = open::that(format!("https://modrinth.com/modpack/{}", project.slug)); }
+                                else { *requested = Some(project.slug.clone()); }
+                            }
+                            if !open_only {
+                                let text = if expanded { "Скрыть версии" } else { "Выбрать версию" };
+                                if mc_button(actions, text, egui::vec2(actions_width, 26.0), 11.0, true, false).clicked() {
+                                    *toggle = Some(project.slug.clone());
+                                }
+                            }
+                            if actions.small_button("Страница на Modrinth").clicked() {
+                                let kind = if self.mod_category == "world" { "modpack" } else { self.mod_category.as_str() };
+                                let _ = open::that(format!("https://modrinth.com/{kind}/{}", project.slug));
+                            }
+                        });
+                    }
+                });
+
+                if compact {
+                    card.add_space(8.0);
+                    card.horizontal(|actions| {
+                        actions.spacing_mut().item_spacing.x = 8.0;
+                        let button_width = ((actions.available_width() - 8.0) / 2.0).max(1.0);
                         let open_only = self.mod_category == "modpack";
                         let busy = self.mod_installing;
                         let label = if open_only { "Открыть ↗" } else if busy { "Установка…" }
                             else if self.mod_category == "world" { "Импортировать" } else { "Установить" };
-                        if mc_button(actions, label, egui::vec2(actions_width, 32.0), 12.5, !busy, !open_only).clicked() {
+                        if mc_button(actions, label, egui::vec2(button_width, 32.0), 12.0, !busy, !open_only).clicked() {
                             if open_only { let _ = open::that(format!("https://modrinth.com/modpack/{}", project.slug)); }
                             else { *requested = Some(project.slug.clone()); }
                         }
-                        if !open_only {
-                            let text = if expanded { "Скрыть версии" } else { "Выбрать версию" };
-                            if mc_button(actions, text, egui::vec2(actions_width, 26.0), 11.0, true, false).clicked() {
-                                *toggle = Some(project.slug.clone());
-                            }
+                        if !open_only && mc_button(actions, if expanded { "Скрыть версии" } else { "Выбрать версию" },
+                            egui::vec2(button_width, 32.0), 11.0, true, false).clicked() {
+                            *toggle = Some(project.slug.clone());
                         }
+                    });
+                    card.with_layout(Layout::right_to_left(Align::Center), |actions| {
                         if actions.small_button("Страница на Modrinth").clicked() {
                             let kind = if self.mod_category == "world" { "modpack" } else { self.mod_category.as_str() };
                             let _ = open::that(format!("https://modrinth.com/{kind}/{}", project.slug));
                         }
                     });
-                });
+                }
 
                 // 4. Version picker
                 if expanded {
@@ -3033,41 +3061,43 @@ fn compact_versions(versions: &[String]) -> String {
     }
 }
 
-/// A small tileable dirt-like texture, scaled up with nearest filtering for the pixel look.
+/// A soft, abstract teal-and-slate backdrop for the Minty interface.
 fn make_background_texture(ctx: &egui::Context) -> egui::TextureHandle {
-    const SIZE: usize = 32;
+    const SIZE: usize = 256;
     let mut pixels = Vec::with_capacity(SIZE * SIZE);
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let mut hash = (x as u32).wrapping_mul(374_761_393) ^ (y as u32).wrapping_mul(668_265_263);
-            hash = (hash ^ (hash >> 13)).wrapping_mul(1_274_126_177);
-            hash ^= hash >> 16;
-            let roll = hash % 100;
-            let (r, g, b) = if roll < 6 { (60, 60, 62) }
-                else if roll < 30 { (46, 38, 31) }
-                else if roll < 72 { (38, 31, 26) }
-                else { (31, 26, 22) };
-            pixels.push(Color32::from_rgb(r, g, b));
+            let nx = x as f32 / (SIZE - 1) as f32;
+            let ny = y as f32 / (SIZE - 1) as f32;
+            let teal = (-(((nx - 0.78).powi(2) / 0.16) + ((ny - 0.12).powi(2) / 0.24)) * 2.4).exp() * 0.42;
+            let blue = (-(((nx - 0.12).powi(2) / 0.22) + ((ny - 0.82).powi(2) / 0.20)) * 2.4).exp() * 0.28;
+            let channel = |base: f32, teal_tint: f32, blue_tint: f32| {
+                (base + teal * teal_tint + blue * blue_tint).clamp(0.0, 255.0) as u8
+            };
+            pixels.push(Color32::from_rgb(
+                channel(13.0, 28.0, 26.0),
+                channel(19.0, 82.0, 34.0),
+                channel(24.0, 69.0, 66.0),
+            ));
         }
     }
     ctx.load_texture(
-        "minty-dirt-background",
+        "minty-aurora-background",
         egui::ColorImage { size: [SIZE, SIZE], pixels },
         egui::TextureOptions {
-            magnification: egui::TextureFilter::Nearest,
-            minification: egui::TextureFilter::Nearest,
-            wrap_mode: egui::TextureWrapMode::Repeat,
+            magnification: egui::TextureFilter::Linear,
+            minification: egui::TextureFilter::Linear,
+            wrap_mode: egui::TextureWrapMode::ClampToEdge,
             mipmap_mode: None,
         },
     )
 }
 
 fn paint_background(painter: &egui::Painter, rect: egui::Rect, texture: &egui::TextureHandle) {
-    let tile = 192.0;
     painter.image(
         texture.id(),
         rect,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(rect.width() / tile, rect.height() / tile)),
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         Color32::WHITE,
     );
     let mut mesh = egui::Mesh::default();
