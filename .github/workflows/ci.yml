@@ -17,24 +17,8 @@ jobs:
     env:
       RUSTFLAGS: -C target-feature=+crt-static
     steps:
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
-
-      - name: Rebuild source archive
-        shell: bash
-        run: |
-          python - <<'PY'
-          import base64
-          from pathlib import Path
-          parts = sorted(Path("source-parts").glob("part-*.txt"))
-          if len(parts) != 12:
-              raise SystemExit(f"Expected 12 source parts, found {len(parts)}")
-          encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
-          Path("Minty-Launcher-source.tar.xz").write_bytes(base64.b64decode(encoded, validate=True))
-          PY
-
-      - name: Extract source archive
-        run: tar -xf Minty-Launcher-source.tar.xz
 
       - name: Set up JDK 21 (build-time only)
         uses: actions/setup-java@v4
@@ -63,7 +47,7 @@ jobs:
           test "$(wc -c < "$exe")" -gt 1048576
           sha256sum "$exe"
 
-      - name: Upload executable
+      - name: Upload executable artifact
         uses: actions/upload-artifact@v4
         with:
           name: minty-launcher-windows-x64

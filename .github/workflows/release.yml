@@ -15,24 +15,8 @@ jobs:
     env:
       RUSTFLAGS: -C target-feature=+crt-static
     steps:
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
-
-      - name: Rebuild source archive
-        shell: bash
-        run: |
-          python - <<'PY'
-          import base64
-          from pathlib import Path
-          parts = sorted(Path("source-parts").glob("part-*.txt"))
-          if len(parts) != 12:
-              raise SystemExit(f"Expected 12 source parts, found {len(parts)}")
-          encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
-          Path("Minty-Launcher-source.tar.xz").write_bytes(base64.b64decode(encoded, validate=True))
-          PY
-
-      - name: Extract source archive
-        run: tar -xf Minty-Launcher-source.tar.xz
 
       - name: Set up JDK 21 (build-time only)
         uses: actions/setup-java@v4
@@ -71,7 +55,7 @@ jobs:
           body: |
             Minty Launcher for Windows 10/11 x64.
 
-            Download the minty-launcher.exe asset and run it with a double-click. No terminal commands or separately installed Java are required from the user; the launcher downloads a compatible Java Runtime on first game launch.
+            Download the minty-launcher.exe asset and run it with a double-click. No terminal commands or separately installed Java are required from the user; a compatible Java Runtime is downloaded automatically when Minecraft is launched.
           generate_release_notes: true
           files: dist/minty-launcher.exe
           fail_on_unmatched_files: true

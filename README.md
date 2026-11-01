@@ -1,34 +1,34 @@
 # Minty Launcher
 
-**Windows download:** [minty-launcher.exe — latest GitHub Release](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/minty-launcher.exe)
+**Download for Windows:** [minty-launcher.exe — latest GitHub Release](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/minty-launcher.exe)
 
-Download that single EXE and launch it with a double-click. No terminal commands, Rust toolchain or separately installed JDK are required from the user. Internet access is required to download Minecraft files and, when needed, a compatible Java Runtime.
+Download the single EXE and launch it with a double-click. The user does not need to open a terminal or install Rust, a JDK or a separate Java Runtime. Internet access is required for Minecraft and Java downloads. A compatible Java Runtime is downloaded by the launcher when needed.
 
-## Source code
+## Open-source source code
 
-The readable Rust and Java project is published in the [minty-launcher/ source directory](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/tree/main/minty-launcher). A workflow synchronizes that directory from the committed source snapshot. The application executable is published separately as the `minty-launcher.exe` asset in Releases.
+The complete readable project is in [minty-launcher/](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/tree/main/minty-launcher): Rust source, Java bootstrap, build script, Cargo manifest, documentation and security notes.
 
-GitHub also generates “Source code (zip)” and “Source code (tar.gz)” links for each tag automatically. These are source snapshots, not the app. To run the launcher, download `minty-launcher.exe`.
+GitHub automatically adds “Source code (zip)” and “Source code (tar.gz)” snapshot links to every Release. Those files are source snapshots, not the application. The actual app download is the separate `minty-launcher.exe` asset.
 
-## Launcher features
+## Features
 
-- Install and launch official Minecraft Java Edition Vanilla releases.
-- Download and integrity-check official client JAR, libraries, native libraries and assets.
-- Automatically install the Java Runtime required by the selected Minecraft version.
-- Microsoft Device Code sign-in with Xbox/XSTS/Minecraft profile validation. Online sign-in requires a Microsoft OAuth Client ID configured in settings.
-- Offline profile for single-player use.
-- Skin Studio: import, edit pixels, draw, and export 64×64 PNG skins; legacy 64×32 import is supported.
-- “Слабый ПК” mode: lower render/simulation distance, fewer particles, reduced Java memory allocation, and gentler garbage-collector settings.
+- Minecraft Java Edition Vanilla release selection and installation.
+- Download and SHA-1 integrity validation of official client JAR, libraries, native libraries and assets.
+- Automatic install of the Java Runtime required by the selected Minecraft version.
+- Microsoft Device Code sign-in with Xbox/XSTS/Minecraft profile validation. Online sign-in requires a Microsoft OAuth Client ID configured in Settings.
+- Offline profile for single-player.
+- Skin Studio: PNG import, pixel drawing/editing and 64×64 export; legacy 64×32 import is supported.
+- “Слабый ПК” mode: lower render and simulation distance, fewer particles, 2 GB Java memory cap and conservative GC parameters.
 - Custom Minecraft installation directory.
 - Launcher settings and event journal.
-- Dark interface with mint accents.
+- Dark UI with mint accents.
 
-## Limitations to know
+## Important limitations
 
-Skin Studio edits and exports a local PNG. Vanilla Minecraft does not automatically apply a local PNG to an offline profile; displaying it in-game requires a compatible local-skin mod. Online skins are managed by the official Minecraft account.
+Skin Studio edits and exports a local PNG. Vanilla Minecraft does not automatically apply a local PNG to an offline profile; displaying it in-game requires a compatible local-skin mod. Online skins remain managed by the official Minecraft account.
 
-The “Слабый ПК” mode applies conservative settings, but no launcher can guarantee a fixed FPS increase across all hardware, drivers and worlds. The first release supports Vanilla only; Fabric, Forge and NeoForge are not integrated. SHA-1 checks protect the integrity of supported Mojang downloads and are not an anti-cheat system.
+The “Слабый ПК” profile uses more conservative settings but cannot guarantee a fixed FPS increase; results depend on hardware, driver, game version and world. The first release supports Vanilla only. Fabric, Forge and NeoForge are not integrated. SHA-1 validation protects official downloaded files; it is not an anti-cheat.
 
 ## Build
 
-GitHub Actions builds the Windows x64 binary and publishes it after tests pass. JDK 21 is needed only on the build runner to compile the embedded Java bootstrap class. End users do not need JDK installed; the launcher downloads the required Java Runtime when a Minecraft version is launched.
+The Windows workflow tests and compiles `minty-launcher.exe` for Windows x64. JDK 21 is required on the build runner only to compile the small Java bootstrap class embedded into the executable. End users do not need a JDK. A compatible Java Runtime is downloaded automatically by the launcher at game launch.
