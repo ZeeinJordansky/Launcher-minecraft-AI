@@ -1,6 +1,6 @@
 use std::thread;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct HardwareInfo {
     pub cpu_name: String,
     pub logical_cores: usize,
