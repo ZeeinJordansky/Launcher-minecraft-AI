@@ -42,7 +42,8 @@ def main() -> None:
 
     optional_offset = pe_offset + 24
     require(optional_offset + optional_size <= len(data), "truncated optional header")
-    require(u16(data, optional_offset) == 0x20B, "expected PE32+ optional header")\n    require(u16(data, optional_offset + 68) == 2, "expected Windows GUI subsystem")
+    require(u16(data, optional_offset) == 0x20B, "expected PE32+ optional header")
+    require(u16(data, optional_offset + 68) == 2, "expected Windows GUI subsystem")
 
     resource_entry = optional_offset + 112 + 2 * 8
     require(resource_entry + 8 <= optional_offset + optional_size, "resource directory entry missing")
