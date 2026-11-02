@@ -9,7 +9,7 @@
     <Version>2.1.0</Version>
     <InformationalVersion>2.1.0</InformationalVersion>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <ApplicationIcon>../scripts/installer/Minty.ico</ApplicationIcon>
+    <ApplicationIcon Condition="Exists('../scripts/installer/Minty.ico')">../scripts/installer/Minty.ico</ApplicationIcon>
     <IsAotCompatible>true</IsAotCompatible>
     <PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
     <TrimMode>full</TrimMode>

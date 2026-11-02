@@ -14,9 +14,9 @@ Java is not needed to build the launcher. Minty uses a Java runtime only when la
 From the repository root:
 
 ```powershell
-dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 python -m pip install Pillow
 python scripts/installer/build_icon.py
+dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 dotnet build minty-launcher/MintyLauncher.csproj --configuration Release
 ```
 

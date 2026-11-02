@@ -14,8 +14,8 @@ Minty Launcher is an Avalonia desktop app written in C# and published with Nativ
 ## Build and test
 
 ```powershell
-dotnet test ../minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 python ../scripts/installer/build_icon.py
+dotnet test ../minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 dotnet publish MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output ../dist/launcher
 ```
 

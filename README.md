@@ -17,9 +17,9 @@ Minty Launcher is a Windows x64 Minecraft Java launcher with a custom Avalonia U
 Requirements: .NET 10 SDK, Windows 10/11 x64 for the release build, Python/Pillow for the application icon, and Inno Setup 6 to produce the installer.
 
 ```powershell
-dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 python -m pip install Pillow
 python scripts/installer/build_icon.py
+dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
 ```
 
