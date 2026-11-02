@@ -1,16 +1,7 @@
 # Minty Launcher project status
 
-The active 2.0.0-global application lives directly in [`minty-launcher/`](../minty-launcher/): a WPF frontend in C# and a Go engine, with Java used to run Minecraft. Legacy Rust source files remain in that folder but are no longer built or published by the 2.0.0-global workflows.
+The active launcher is being migrated in [`minty-launcher/`](../minty-launcher/) to C# / Avalonia with Native AOT. Java remains only as the Minecraft runtime. The Rust and Go source trees have been removed from the active project.
 
-## Build and release
+The `v2.0.0-global` release remains the last published release. The `v2.1.0` implementation and release pipeline are not yet published; the Windows Native AOT job and signed release still need to complete.
 
-- CI runs Go tests and publishes a self-contained Windows x64 launcher package.
-- The release workflow runs only for tag `v2.0.0-global`; it builds the installer and portable ZIP.
-- A GitHub release is not published until that tag is pushed and the workflow succeeds.
-
-## Known limitations
-
-- Microsoft authentication and automated mod-loader installation/launch are not implemented.
-- Modpack projects open on Modrinth for manual installation.
-- Automatic Java installation currently supports Windows x64.
-- The launcher is not Authenticode-signed.
+The signed-release workflow intentionally requires the GitHub Actions secret `UPDATE_SIGNING_PRIVATE_KEY`. Do not create the `v2.1.0` tag until that secret is configured and the Windows CI publish is green.

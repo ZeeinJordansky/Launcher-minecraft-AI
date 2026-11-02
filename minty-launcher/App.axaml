@@ -1,0 +1,88 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MintyLauncher.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="Window">
+      <Setter Property="Background" Value="#0B100F" />
+      <Setter Property="Foreground" Value="#F2F6F3" />
+      <Setter Property="FontFamily" Value="Inter" />
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="Background" Value="#18221E" />
+      <Setter Property="Foreground" Value="#EAF2ED" />
+      <Setter Property="BorderBrush" Value="#293830" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.16" />
+          <DoubleTransition Property="Opacity" Duration="0:0:0.16" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Button:pointerover">
+      <Setter Property="Background" Value="#24342C" />
+      <Setter Property="BorderBrush" Value="#567766" />
+    </Style>
+    <Style Selector="Window.no-animations Button">
+      <Setter Property="Transitions">
+        <Transitions />
+      </Setter>
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#A7E8C6" />
+      <Setter Property="Foreground" Value="#102018" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+    <Style Selector="Button.primary:pointerover">
+      <Setter Property="Background" Value="#C5F5DB" />
+    </Style>
+    <Style Selector="Button.nav">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="Button.nav.active">
+      <Setter Property="Background" Value="#1B2A22" />
+      <Setter Property="Foreground" Value="#A7E8C6" />
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="#111916" />
+      <Setter Property="Foreground" Value="#F2F6F3" />
+      <Setter Property="BorderBrush" Value="#2C3B33" />
+      <Setter Property="CornerRadius" Value="11" />
+      <Setter Property="Padding" Value="14,11" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="CaretBrush" Value="#A7E8C6" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="Background" Value="#111916" />
+      <Setter Property="Foreground" Value="#F2F6F3" />
+      <Setter Property="BorderBrush" Value="#2C3B33" />
+      <Setter Property="CornerRadius" Value="11" />
+      <Setter Property="MinHeight" Value="44" />
+    </Style>
+    <Style Selector="CheckBox">
+      <Setter Property="Foreground" Value="#DCE8E0" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Slider">
+      <Setter Property="Foreground" Value="#A7E8C6" />
+    </Style>
+    <Style Selector="ProgressBar">
+      <Setter Property="Foreground" Value="#A7E8C6" />
+      <Setter Property="Background" Value="#26342D" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+  </Application.Styles>
+</Application>

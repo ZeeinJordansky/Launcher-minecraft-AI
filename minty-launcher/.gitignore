@@ -1,10 +1,7 @@
-/target/
-/dist/
-/bin/
-/obj/
-engine/bin/
-engine/dist/
-engine/**/*.exe
+**/target/
+**/dist/
+**/bin/
+**/obj/
 *.log
 *.tmp
 .vscode/

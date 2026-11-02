@@ -1,37 +1,37 @@
-# Building Minty Launcher 2.0.0-global
+# Building Minty Launcher 2.1.0
 
 ## Requirements
 
-- Windows 10/11 x64 for running the WPF interface.
-- .NET 10 SDK for building the C# frontend.
-- Go 1.23 or later for tests and the Go engine.
-- Pillow for generating the application and installer icon.
-- Inno Setup 6 to build the Windows installer.
+- .NET 10 SDK.
+- Windows 10/11 x64 for Native AOT publishing and release verification.
+- Python 3 and Pillow to generate the icon.
+- Inno Setup 6 to compile the Windows installer.
 
-Minecraft Java Runtime is downloaded by the launcher as needed; a JDK is not needed to build or run the launcher.
+Java is not needed to build the launcher. Minty uses a Java runtime only when launching Minecraft.
 
 ## Local checks
 
-From the repository root, run the Go tests:
-
-```sh
-cd minty-launcher/engine
-go test ./...
-go vet ./...
-```
-
-Build the WPF frontend from the repository root on Windows:
+From the repository root:
 
 ```powershell
-dotnet build minty-launcher/MintyLauncher.csproj
+dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
+python -m pip install Pillow
+python scripts/installer/build_icon.py
+dotnet build minty-launcher/MintyLauncher.csproj --configuration Release
 ```
 
-To package the Windows application, first build `minty-engine.exe` for Windows x64 into `minty-launcher/engine/dist/`, generate the icon with `python scripts/installer/build_icon.py`, then publish:
+Native AOT publish on Windows x64:
 
 ```powershell
 dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
 ```
 
-The published directory includes the Go engine beside the launcher. The root GitHub Actions workflows perform this packaging, validate both PE files, build a portable ZIP, and create the installer for tag `v2.0.0-global`.
+The publish is self-contained and does not require Go, Rust, or a separately installed .NET runtime.
 
-The legacy Rust files remain in this folder for reference; they are not used by the current CI or release workflow.
+## Signed release
+
+The `v2.1.0` workflow tests the app, publishes a Windows x64 Native AOT executable, packages portable and installer builds, creates an ECDSA-signed update manifest, and publishes the release.
+
+Before tagging, create a P-256 ECDSA private key and store its PEM contents as the repository Actions secret `UPDATE_SIGNING_PRIVATE_KEY`. Never commit or print the private key. The workflow derives the public key, embeds it in that release executable, and signs the SHA-256 manifest. The launcher rejects updates if its key is missing or the signature/hash is invalid.
+
+The installer is compiled with `scripts/installer/MintySetup.iss`. Run `scripts/installer/build_icon.py` first to create `scripts/installer/Minty.ico`.

@@ -1,4 +1,4 @@
-name: Minty Launcher - Windows CI
+name: Minty Launcher - C# Windows CI
 
 on:
   push:
@@ -17,59 +17,27 @@ permissions:
 
 jobs:
   build:
-    name: Windows x64 tests and launcher
+    name: .NET tests and Windows Native AOT publish
     runs-on: windows-latest
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: minty-launcher/engine/go.mod
-          cache-dependency-path: minty-launcher/engine/go.mod
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
-      - name: Run Go engine tests
-        working-directory: minty-launcher/engine
-        run: go test ./...
-
-      - name: Build Windows Go engine
-        working-directory: minty-launcher/engine
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $env:CGO_ENABLED = "0"
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
-          go build -trimpath -ldflags="-s -w" -o dist/minty-engine.exe ./cmd/minty-engine
+      - name: Run tests
+        run: dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
 
       - name: Generate application icon
         run: |
           python -m pip install --disable-pip-version-check Pillow
           python scripts/installer/build_icon.py
 
-      - name: Publish self-contained Windows launcher
-        run: dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
+      - name: Publish self-contained Windows Native AOT app
+        run: dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/launcher
 
-      - name: Stage portable package
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/launcher/* -DestinationPath dist/MintyLauncher-Portable.zip -Force
-
-      - name: Verify Windows binaries
-        run: |
-          python scripts/verify_windows_exe.py dist/launcher/minty-launcher.exe
-          python scripts/verify_windows_exe.py dist/launcher/minty-engine.exe --console
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: minty-launcher-windows-x64-2.0.0-global
-          path: |
-            dist/MintyLauncher-Portable.zip
-          if-no-files-found: error
+      - name: Verify native executable
+        run: python scripts/verify_windows_exe.py artifacts/launcher/minty-launcher.exe

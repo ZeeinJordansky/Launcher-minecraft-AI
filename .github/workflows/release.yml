@@ -1,58 +1,67 @@
-name: Minty Launcher - Global Release
+name: Minty Launcher - Signed 2.1.0 Release
 
 on:
   push:
-    tags:
-      - "v2.0.0-global"
+    tags: ["v2.1.0"]
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build, verify and publish Windows release
+    name: Test, sign and publish Native AOT release
     runs-on: windows-latest
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: minty-launcher/engine/go.mod
-          cache-dependency-path: minty-launcher/engine/go.mod
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
-      - name: Run Go engine tests
-        working-directory: minty-launcher/engine
-        run: go test ./...
-
-      - name: Build Windows Go engine
-        working-directory: minty-launcher/engine
+      - name: Require signing key and embed its public key
         shell: pwsh
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $env:CGO_ENABLED = "0"
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
-          go build -trimpath -ldflags="-s -w" -o dist/minty-engine.exe ./cmd/minty-engine
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_PRIVATE_KEY)) {
+            throw "Configure the UPDATE_SIGNING_PRIVATE_KEY Actions secret before publishing a release."
+          }
+          $signer = [System.Security.Cryptography.ECDsa]::Create()
+          try {
+            $signer.ImportFromPem($env:UPDATE_SIGNING_PRIVATE_KEY)
+            $publicKey = [Convert]::ToBase64String($signer.ExportSubjectPublicKeyInfo())
+            $source = @"
+          namespace MintyLauncher.Services;
+          internal static class UpdateSigningKey
+          {
+              internal const string PublicKeyBase64 = "$publicKey";
+          }
+          "@
+            [IO.File]::WriteAllText(
+              "minty-launcher/Services/UpdateSigningKey.cs",
+              $source,
+              [Text.UTF8Encoding]::new($false))
+          }
+          finally {
+            $signer.Dispose()
+          }
 
-      - name: Install Pillow and generate application icon
+      - name: Run tests
+        run: dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
+
+      - name: Generate application icon
         run: |
           python -m pip install --disable-pip-version-check Pillow
           python scripts/installer/build_icon.py
 
-      - name: Publish self-contained Windows launcher
+      - name: Publish self-contained Windows Native AOT app
         run: dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
 
       - name: Stage portable package
         shell: pwsh
-        run: |
-          Compress-Archive -Path dist/launcher/* -DestinationPath dist/MintyLauncher-Portable.zip -Force
+        run: Compress-Archive -Path dist/launcher/* -DestinationPath dist/MintyLauncher-Portable.zip -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -65,38 +74,64 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=2.0.0" "scripts/installer/MintySetup.iss"
+          & $iscc "/DAppVersion=2.1.0" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
 
-      - name: Verify release binaries
+      - name: Verify application binaries
         shell: pwsh
         run: |
           python scripts/verify_windows_exe.py dist/launcher/minty-launcher.exe
-          python scripts/verify_windows_exe.py dist/launcher/minty-engine.exe --console
           if ((Get-Item dist/MintyLauncher-Setup.exe).Length -lt 1000000) { throw "Setup is unexpectedly small." }
-          Get-FileHash dist/launcher/minty-launcher.exe -Algorithm SHA256
-          Get-FileHash dist/launcher/minty-engine.exe -Algorithm SHA256
-          Get-FileHash dist/MintyLauncher-Setup.exe -Algorithm SHA256
+
+      - name: Create signed update manifest
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          $assets = @(
+            [ordered]@{
+              name = "MintyLauncher-Setup.exe"
+              sha256 = (Get-FileHash "dist/MintyLauncher-Setup.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+            },
+            [ordered]@{
+              name = "MintyLauncher-Portable.zip"
+              sha256 = (Get-FileHash "dist/MintyLauncher-Portable.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          )
+          $manifest = [ordered]@{ version = "2.1.0"; assets = $assets }
+          $json = ConvertTo-Json -InputObject $manifest -Depth 5 -Compress
+          $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+          [IO.File]::WriteAllBytes("dist/MintyUpdateManifest.json", $bytes)
+          $signer = [System.Security.Cryptography.ECDsa]::Create()
+          try {
+            $signer.ImportFromPem($env:UPDATE_SIGNING_PRIVATE_KEY)
+            $signature = $signer.SignData($bytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+            [IO.File]::WriteAllText(
+              "dist/MintyUpdateManifest.sig",
+              [Convert]::ToBase64String($signature),
+              [Text.UTF8Encoding]::new($false))
+          }
+          finally {
+            $signer.Dispose()
+          }
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0-global
-          name: Minty Launcher 2.0.0-global
+          tag_name: v2.1.0
+          name: Minty Launcher 2.1.0
           body: |
-            Minty Launcher 2.0.0-global for Windows 10/11 x64.
+            Minty Launcher 2.1.0 for Windows 10/11 x64.
 
-            - Новый интерфейс WPF на C# с авторским Minty-оформлением, анимациями и кастомной аватаркой.
-            - Go-движок для Mojang, Modrinth, настроек, загрузок и запуска Java Edition.
-            - Поиск и сортировка проектов Modrinth, категории модов, модпаков, ресурспаков и шейдеров.
-            - Исправлены переполнение карточек каталога и установка контента в изолированные профили.
-            - Переносимый ZIP включает интерфейс и Go-движок; установщик включает оба файла.
-            - Установка модпаков выполняется через страницу Modrinth. Загрузчики модов и вход Microsoft пока не поддерживаются.
-            - EXE не подписан Authenticode.
+            - C# / Avalonia desktop app published with Native AOT; Java is used only for Minecraft.
+            - Microsoft Device Code sign-in with ownership verification and Windows Credential Manager refresh-token storage.
+            - Vanilla Minecraft installation and launch, Fabric / Quilt / Forge / NeoForge profiles, verified Modrinth mods/resource packs/shaders, worlds, profiles, diagnostics, and settings.
+            - Update installer protected by a detached ECDSA signature and SHA-256 asset verification.
           generate_release_notes: true
           files: |
             dist/MintyLauncher-Setup.exe
             dist/MintyLauncher-Portable.zip
+            dist/MintyUpdateManifest.json
+            dist/MintyUpdateManifest.sig
           fail_on_unmatched_files: true
-          overwrite_files: true
           make_latest: true

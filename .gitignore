@@ -1,0 +1,4 @@
+**/bin/
+**/obj/
+/dist/
+/scripts/installer/Minty.ico

@@ -1,47 +1,32 @@
-# Minty Launcher
+# Minty Launcher 2.1.0
 
-Minty Launcher 2.0.0-global is a Windows x64 Minecraft Java launcher with a custom WPF interface, a Go engine, and Java for running the game.
-
-## Download
-
-The `v2.0.0-global` release publishes a Windows installer and a portable ZIP. The portable ZIP contains the launcher, its Go engine, and the .NET runtime files it needs. It does not require Go or a separate .NET installation.
+Minty Launcher is a Windows x64 Minecraft Java launcher with a custom Avalonia UI, C# services, and Java used only to run the game. The 2.1.0 work replaces the earlier Go/Rust implementation and enables Native AOT publishing.
 
 ## Features
 
-- Original Minty dark interface with a custom profile avatar, animated page transitions, and resizable window.
-- Mojang version catalog with search and release/snapshot filters.
-- Minecraft installation and launch, including verified game assets and managed Temurin Java runtimes on Windows.
-- Modrinth search for mods, modpacks, resource packs, and shaders; popularity and recency sorting.
-- Installs compatible mods, resource packs, and shaders into shared or version-isolated folders. Modpacks open on Modrinth.
-- Offline profile, Java path selection, memory limit, low-spec JVM options, and version-isolated game data.
-- Cancellable downloads and an option to open the active mods directory.
-
-## Current limitations
-
-- Minecraft authentication is offline-only; Microsoft sign-in is not implemented.
-- This release launches Vanilla Minecraft. Fabric, Forge, NeoForge, and Quilt can be selected as Modrinth compatibility filters, but the launcher does not install or launch those loaders.
-- Modpack projects open on Modrinth instead of being imported automatically.
-- Automatic Java installation currently supports Windows x64.
-- The launcher is not Authenticode-signed.
-
-## Source layout
-
-- [`minty-launcher/`](./minty-launcher/) — active C# WPF frontend and Go engine. Legacy Rust source files remain in the same folder but are not used by the 2.0.0-global workflows.
-- [`.github/workflows/`](./.github/workflows/) — Windows CI and tag-triggered release pipeline.
+- Original dark Minty interface with custom profile avatar, responsive navigation, and animated controls.
+- Mojang release/snapshot catalog, installation, hash-checked game assets, and Java runtime setup.
+- Microsoft Device Code sign-in with Minecraft ownership checks and refresh-token storage in Windows Credential Manager.
+- Fabric, Quilt, Forge, and NeoForge profile installation.
+- Modrinth mod search/download with SHA-1/SHA-512 verification.
+- Isolated profiles, safe world ZIP import/export, mod management, PNG skin preview, Bedrock launch shortcut, and crash diagnostics.
+- ECDSA-signed update manifest and SHA-256 installer verification. Unsigned or invalid updates are rejected.
 
 ## Build and test
 
-Run Go tests:
-
-```sh
-cd minty-launcher/engine
-go test ./...
-```
-
-Build the WPF frontend on Windows with .NET 10:
+Requirements: .NET 10 SDK, Windows 10/11 x64 for the release build, Python/Pillow for the application icon, and Inno Setup 6 to produce the installer.
 
 ```powershell
-dotnet build minty-launcher/MintyLauncher.csproj
+dotnet test minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
+python -m pip install Pillow
+python scripts/installer/build_icon.py
+dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
 ```
 
-The release workflow cross-compiles the Go engine for Windows x64, publishes a self-contained .NET application, packages the portable ZIP and installer, and runs the Go test suite.
+The GitHub release workflow additionally requires the repository Actions secret `UPDATE_SIGNING_PRIVATE_KEY`. See [the build guide](./minty-launcher/docs/BUILDING.md) and [security policy](./minty-launcher/SECURITY.md) for signing setup. Release publication must not proceed without it.
+
+## Source layout
+
+- [`minty-launcher/`](./minty-launcher/) — Avalonia UI, C# launcher services, and Java game runtime integration.
+- [`minty-launcher.Tests/`](./minty-launcher.Tests/) — unit tests.
+- [`.github/workflows/`](./.github/workflows/) — Windows CI and signed release pipeline.

@@ -1,40 +1,24 @@
-# Minty Launcher 2.0.0-global
+# Minty Launcher 2.1.0
 
-The active launcher source is in this folder: a C# / WPF desktop frontend, a Go backend, and Java to run Minecraft. The legacy Rust sources remain here but are no longer part of the 2.0.0-global build.
+Minty Launcher is an Avalonia desktop app written in C# and published with Native AOT for Windows x64. Java is used only to run Minecraft.
 
-## Architecture
+## Implemented
 
-- `MainWindow.xaml` and `MainWindow.xaml.cs`: custom Minty UI, navigation, settings, versions, Modrinth catalog, and progress.
-- `Services/EngineClient.cs`: starts `minty-engine.exe` and exchanges JSON-lines requests/events over standard input/output.
-- `engine/cmd/minty-engine`: Go command dispatcher.
-- `engine/internal/minecraft`: Mojang manifest, verified downloads, runtime setup, and Java launch.
-- `engine/internal/mods`: Modrinth search and verified compatible file installation.
-- `engine/internal/settings`: validated, atomic user settings and profile paths.
+- Mojang release/snapshot lookup and vanilla game download/launch with hash verification.
+- Microsoft Device Code sign-in, Minecraft ownership verification, and secure refresh-token storage through Windows Credential Manager.
+- Fabric, Quilt, Forge, and NeoForge client profiles.
+- Modrinth mod, resource-pack, and shader search with verified installation.
+- Isolated profiles, ZIP world import/export, mod removal, PNG skin preview, Bedrock launch shortcut, crash-report diagnostics, and launcher settings.
+- Signed update manifest verification with ECDSA and SHA-256 installer verification.
 
-The Go executable is shipped next to the frontend. During development, the UI can start the engine with `go run` when the Go source tree is available.
-
-## Supported behavior
-
-- Search and install Vanilla Minecraft Java versions.
-- Install Windows Temurin runtimes automatically when a compatible runtime is not configured.
-- Search Modrinth for mods, modpacks, resource packs, and shaders with category and sort filters.
-- Install compatible mods, resource packs, and shaders into shared or per-version profile folders.
-- Configure an offline username, Java executable, game path, memory limit, low-spec JVM flags, and interface animations.
-- Cancel active downloads and open the current mods folder.
-
-Microsoft authentication and automated mod-loader installation/launch are not implemented. Modloader selection is used as a Modrinth compatibility filter; launching a non-Vanilla loader is explicitly rejected instead of silently starting the wrong profile. Modpacks open their Modrinth page.
-
-## Local checks
-
-```sh
-cd engine
-go test ./...
-```
-
-On Windows with .NET 10:
+## Build and test
 
 ```powershell
-dotnet build MintyLauncher.csproj
+dotnet test ../minty-launcher.Tests/MintyLauncher.Tests.csproj --configuration Release
+python ../scripts/installer/build_icon.py
+dotnet publish MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output ../dist/launcher
 ```
 
-The repository CI builds a self-contained Windows x64 publish directory and the release workflow packages it with `minty-engine.exe`.
+Release publishing requires the repository Actions secret `UPDATE_SIGNING_PRIVATE_KEY`. The workflow embeds its corresponding public key in the native executable and signs the update manifest. Without the secret, the workflow fails closed.
+
+See [BUILDING.md](./docs/BUILDING.md), [ARCHITECTURE.md](./docs/ARCHITECTURE.md), and [SECURITY.md](./SECURITY.md).
