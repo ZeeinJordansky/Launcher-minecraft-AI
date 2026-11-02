@@ -1,4 +1,4 @@
-# Building Minty Launcher 2.1.0
+# Building Minty Launcher 2.2.0
 
 ## Requirements
 
@@ -30,7 +30,7 @@ The publish is self-contained and does not require Go, Rust, or a separately ins
 
 ## Signed release
 
-The `v2.1.0` workflow tests the app, publishes a Windows x64 Native AOT executable, packages portable and installer builds, creates an ECDSA-signed update manifest, and publishes the release.
+The `v2.2.0` workflow tests the app, publishes the self-contained Windows x64 build, packages portable and installer builds, creates an ECDSA-signed update manifest, and publishes the release.
 
 Before tagging, create a P-256 ECDSA private key and store its PEM contents as the repository Actions secret `UPDATE_SIGNING_PRIVATE_KEY`. Never commit or print the private key. The workflow derives the public key, embeds it in that release executable, and signs the SHA-256 manifest. The launcher rejects updates if its key is missing or the signature/hash is invalid.
 

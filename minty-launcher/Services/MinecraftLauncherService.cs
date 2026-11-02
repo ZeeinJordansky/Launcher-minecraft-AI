@@ -747,7 +747,7 @@ public sealed class MinecraftLauncherService(HttpClient? httpClient = null) : ID
             ["${version_type}"] = "release",
             ["${natives_directory}"] = nativesDirectory,
             ["${launcher_name}"] = "MintyLauncher",
-            ["${launcher_version}"] = "2.1.0",
+            ["${launcher_version}"] = "2.2.0",
             ["${classpath}"] = string.Join(Path.PathSeparator, classpath),
             ["${classpath_separator}"] = Path.PathSeparator.ToString(),
             ["${user_properties}"] = "{}"
@@ -1146,7 +1146,7 @@ public sealed class MinecraftLauncherService(HttpClient? httpClient = null) : ID
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "MintyLauncher/2.1.0 (https://github.com/ZeeinJordansky/Launcher-minecraft-AI)");
+            "MintyLauncher/2.2.0 (https://github.com/ZeeinJordansky/Launcher-minecraft-AI)");
         return client;
     }
 

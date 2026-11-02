@@ -1,13 +1,15 @@
-# Minty Launcher 2.1.0
+# Minty Launcher 2.2.0
 
-Minty Launcher is an Avalonia desktop app written in C# and published with Native AOT for Windows x64. Java is used only to run Minecraft.
+Minty Launcher is a C# Avalonia desktop app for Windows x64. Java is used only to run Minecraft.
 
 ## Implemented
 
-- Mojang release/snapshot lookup and vanilla game download/launch with hash verification.
+- Gray responsive interface with configurable accent color and simplified launch screen.
+- Searchable full Mojang version catalog, including snapshots and historical beta/alpha releases.
+- Per-instance Minecraft version and mod-loader settings with isolated folders.
 - Microsoft Device Code sign-in, Minecraft ownership verification, and secure refresh-token storage through Windows Credential Manager.
 - Fabric, Quilt, Forge, and NeoForge client profiles.
-- Modrinth mod, resource-pack, and shader search with verified installation.
+- Modrinth popular-content browser, search, sorting, and verified mod/resource-pack/shader installation.
 - Isolated profiles, ZIP world import/export, mod removal, PNG skin preview, Bedrock launch shortcut, crash-report diagnostics, and launcher settings.
 - Signed update manifest verification with ECDSA and SHA-256 installer verification.
 

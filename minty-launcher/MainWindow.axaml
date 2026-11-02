@@ -3,108 +3,112 @@
         x:Class="MintyLauncher.MainWindow"
         Title="Minty Launcher"
         WindowDecorations="None"
-        Width="1440"
-        Height="900"
-        MinWidth="1100"
-        MinHeight="720"
+        CanResize="True"
+        Width="1360"
+        Height="840"
+        MinWidth="980"
+        MinHeight="620"
         WindowStartupLocation="CenterScreen">
-  <Grid ColumnDefinitions="252,*" RowDefinitions="*,76">
-    <Border Grid.RowSpan="2" Background="#0F1713" BorderBrush="#202C25" BorderThickness="0,0,1,0">
-      <Grid RowDefinitions="Auto,Auto,*,Auto">
-        <StackPanel Orientation="Horizontal" Spacing="12" Margin="24,28,20,30">
-          <Border Width="42" Height="42" CornerRadius="15" Background="#A7E8C6">
-            <TextBlock Text="M" Foreground="#102018" FontSize="26" FontWeight="Black"
-                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+  <Grid ColumnDefinitions="220,*" RowDefinitions="*,72">
+    <Border Grid.RowSpan="2" Background="#1D1F23" BorderBrush="#303238" BorderThickness="0,0,1,0">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="12" Margin="22,22,18,24">
+          <Border Width="38" Height="38" CornerRadius="11" Background="{DynamicResource AccentBrush}">
+            <TextBlock Text="M" Foreground="{DynamicResource AccentForegroundBrush}" FontSize="23"
+                       FontWeight="Black" HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
           <StackPanel VerticalAlignment="Center" Spacing="1">
-            <TextBlock Text="MINTY" FontSize="16" FontWeight="Black" LetterSpacing="2" />
-            <TextBlock Text="GAME STUDIO" FontSize="9" Foreground="#83968A" LetterSpacing="1.5" />
+            <TextBlock Text="MINTY" FontSize="15" FontWeight="Black" LetterSpacing="1.8" />
+            <TextBlock Text="GAME LAUNCHER" FontSize="9" Foreground="#9699A1" LetterSpacing="1.1" />
           </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Row="1" Margin="16,0,16,16" Spacing="4">
-          <TextBlock Text="ТВОЯ БИБЛИОТЕКА" Margin="12,0,0,8" FontSize="10"
-                     FontWeight="Bold" Foreground="#6F8176" LetterSpacing="1.4" />
-          <Button Classes="nav active" Tag="home" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="⌂" FontSize="19"/><TextBlock Text="Главная" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="instances" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="▦" FontSize="17"/><TextBlock Text="Сборки" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="versions" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="◷" FontSize="18"/><TextBlock Text="Версии Minecraft" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="mods" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="◇" FontSize="18"/><TextBlock Text="Каталог контента" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="worlds" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="▧" FontSize="17"/><TextBlock Text="Миры и ресурсы" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="skin" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="◉" FontSize="17"/><TextBlock Text="Skin Studio" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="bedrock" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="⬡" FontSize="17"/><TextBlock Text="Bedrock Edition" VerticalAlignment="Center"/></StackPanel></Button>
-        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="12,0,12,16" Spacing="3">
+            <TextBlock Text="БИБЛИОТЕКА" Margin="10,4,0,7" FontSize="10"
+                       FontWeight="Bold" Foreground="#858891" LetterSpacing="1.2" />
+            <Button Classes="nav active" Tag="home" Click="Navigate_Click" Content="Главная" />
+            <Button Classes="nav" Tag="instances" Click="Navigate_Click" Content="Сборки" />
+            <Button Classes="nav" Tag="versions" Click="Navigate_Click" Content="Версии Minecraft" />
+            <Button Classes="nav" Tag="mods" Click="Navigate_Click" Content="Моды и контент" />
+            <Button Classes="nav" Tag="worlds" Click="Navigate_Click" Content="Миры и ресурсы" />
 
-        <StackPanel Grid.Row="2" Margin="16,12,16,16" Spacing="4">
-          <TextBlock Text="УПРАВЛЕНИЕ" Margin="12,0,0,8" FontSize="10"
-                     FontWeight="Bold" Foreground="#6F8176" LetterSpacing="1.4" />
-          <Button Classes="nav" Tag="accounts" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="◎" FontSize="18"/><TextBlock Text="Аккаунты" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="diagnostics" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="⌁" FontSize="18"/><TextBlock Text="Диагностика" VerticalAlignment="Center"/></StackPanel></Button>
-          <Button Classes="nav" Tag="settings" Click="Navigate_Click"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="⚙" FontSize="17"/><TextBlock Text="Настройки" VerticalAlignment="Center"/></StackPanel></Button>
-        </StackPanel>
+            <TextBlock Text="ИНСТРУМЕНТЫ" Margin="10,18,0,7" FontSize="10"
+                       FontWeight="Bold" Foreground="#858891" LetterSpacing="1.2" />
+            <Button Classes="nav" Tag="skin" Click="Navigate_Click" Content="Скины" />
+            <Button Classes="nav" Tag="bedrock" Click="Navigate_Click" Content="Bedrock Edition" />
+            <Button Classes="nav" Tag="accounts" Click="Navigate_Click" Content="Аккаунты" />
+            <Button Classes="nav" Tag="diagnostics" Click="Navigate_Click" Content="Диагностика" />
+          </StackPanel>
+        </ScrollViewer>
 
-        <Border Grid.Row="3" Margin="16" Padding="14" CornerRadius="16"
-                Background="#141F19" BorderBrush="#26362D" BorderThickness="1">
-          <StackPanel Spacing="7">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Ellipse Width="8" Height="8" Fill="#A7E8C6" />
-              <TextBlock Text="ЗАЩИЩЁННОЕ ОБНОВЛЕНИЕ" FontSize="9" FontWeight="Bold"
-                         Foreground="#A7E8C6" VerticalAlignment="Center" />
+        <StackPanel Grid.Row="2" Margin="12,0,12,14" Spacing="3">
+          <Button Classes="nav" Tag="settings" Click="Navigate_Click" Content="Настройки" />
+          <Border Margin="4,10,4,0" Padding="12" CornerRadius="10"
+                  Background="#25272C" BorderBrush="#35383F" BorderThickness="1">
+            <StackPanel Spacing="6">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <Ellipse Width="7" Height="7" Fill="{DynamicResource AccentBrush}" />
+                <TextBlock Text="ЗАЩИТА ОБНОВЛЕНИЙ" FontSize="9" FontWeight="Bold"
+                           Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+              </StackPanel>
+              <TextBlock Text="Подпись и хэш проверяются перед запуском установщика."
+                         FontSize="10" Foreground="#A1A4AC" TextWrapping="Wrap" />
             </StackPanel>
-            <TextBlock Text="Без подписи и совпадающего хэша обновление не запускается."
-                       FontSize="10" Foreground="#88998F" TextWrapping="Wrap" />
-          </StackPanel>
-        </Border>
+          </Border>
+        </StackPanel>
       </Grid>
     </Border>
 
-    <Grid Grid.Column="1" RowSpan="2" RowDefinitions="76,*,70">
-      <Border Grid.Row="0" Background="#0C1310" BorderBrush="#202C25" BorderThickness="0,0,0,1"
+    <Grid Grid.Column="1" RowSpan="2" RowDefinitions="68,*,66">
+      <Border Grid.Row="0" Background="#202227" BorderBrush="#303238" BorderThickness="0,0,0,1"
               PointerPressed="TitleBar_PointerPressed">
-        <Grid Margin="30,0,30,0" ColumnDefinitions="*,Auto">
-          <StackPanel VerticalAlignment="Center" Spacing="3">
+        <Grid Margin="24,0,18,0" ColumnDefinitions="*,Auto">
+          <StackPanel VerticalAlignment="Center" Spacing="2">
             <TextBlock x:Name="PageEyebrow" Text="MINTY LAUNCHER  /  01" FontSize="9"
-                       FontWeight="Bold" Foreground="#83BE9F" LetterSpacing="1.5" />
-            <TextBlock x:Name="PageTitle" Text="Дом там, где твой мир" FontSize="20"
-                       FontWeight="Bold" />
+                       FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" LetterSpacing="1.4" />
+            <TextBlock x:Name="PageTitle" Text="Главная" FontSize="19" FontWeight="Bold" />
           </StackPanel>
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-            <Border CornerRadius="16" Background="#15231B" BorderBrush="#2A3D31" BorderThickness="1"
-                    Padding="13,8">
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Ellipse Width="7" Height="7" Fill="#A7E8C6" />
-                <TextBlock x:Name="AccountBadge" Text="ОФЛАЙН • Player" FontSize="10"
-                           FontWeight="Bold" Foreground="#BCEBD0" />
-              </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+            <Border MaxWidth="190" CornerRadius="8" Background="#292B31" BorderBrush="#3A3D44"
+                    BorderThickness="1" Padding="10,7">
+              <TextBlock x:Name="AccountBadge" Text="ОФЛАЙН • Player" FontSize="10"
+                         FontWeight="Bold" Foreground="#D2D4D9" TextTrimming="CharacterEllipsis" />
             </Border>
-            <Button Content="−" Width="38" Height="38" Padding="0" Click="Minimize_Click" />
-            <Button Content="□" Width="38" Height="38" Padding="0" Click="Maximize_Click" />
-            <Button Content="×" Width="38" Height="38" Padding="0" Click="Close_Click" />
+            <Button Content="—" Width="34" Height="34" Padding="0" FontSize="16"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Click="Minimize_Click" />
+            <Button Content="□" Width="34" Height="34" Padding="0" FontSize="14"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Click="Maximize_Click" />
+            <Button Content="×" Width="34" Height="34" Padding="0" FontSize="16"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Click="Close_Click" />
           </StackPanel>
         </Grid>
       </Border>
 
       <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto">
-        <Grid x:Name="PageHost" Margin="34,32,34,32" />
+        <Grid x:Name="PageHost" Margin="28,26,28,26" />
       </ScrollViewer>
 
-      <Border Grid.Row="2" Background="#0F1713" BorderBrush="#202C25" BorderThickness="0,1,0,0"
-              Padding="30,10">
+      <Border Grid.Row="2" Background="#202227" BorderBrush="#303238" BorderThickness="0,1,0,0"
+              Padding="24,8">
         <Grid ColumnDefinitions="*,Auto,*" VerticalAlignment="Center">
           <StackPanel Spacing="3">
             <TextBlock x:Name="FooterStatus" Text="Готов к запуску" FontSize="11" FontWeight="SemiBold" />
-            <TextBlock x:Name="FooterDetails" Text="MINTY 2.1.0  ·  JAVA EDITION" FontSize="9" Foreground="#7C8D82" />
+            <TextBlock x:Name="FooterDetails" Text="MINTY 2.2.0  ·  JAVA EDITION"
+                       FontSize="9" Foreground="#92959D" TextTrimming="CharacterEllipsis" />
           </StackPanel>
-          <StackPanel Grid.Column="1" x:Name="ProgressPanel" Width="300" Spacing="4" IsVisible="False">
+          <StackPanel Grid.Column="1" x:Name="ProgressPanel" Width="260" Spacing="4" IsVisible="False">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock x:Name="ProgressLabel" Text="Загрузка" FontSize="9" />
-              <TextBlock x:Name="ProgressValue" Grid.Column="1" Text="0%" FontSize="9" Foreground="#A7E8C6" />
+              <TextBlock x:Name="ProgressValue" Grid.Column="1" Text="0%" FontSize="9"
+                         Foreground="{DynamicResource AccentBrush}" />
             </Grid>
             <ProgressBar x:Name="DownloadProgress" Minimum="0" Maximum="100" Height="5" />
           </StackPanel>
-          <TextBlock Grid.Column="2" Text="C#  ·  NATIVE AOT  ·  JAVA"
+          <TextBlock Grid.Column="2" Text="Minecraft Java Edition"
                      HorizontalAlignment="Right" VerticalAlignment="Center"
-                     FontSize="9" Foreground="#829187" LetterSpacing="1" />
+                     FontSize="9" Foreground="#92959D" LetterSpacing=".4" />
         </Grid>
       </Border>
     </Grid>

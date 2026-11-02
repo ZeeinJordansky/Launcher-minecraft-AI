@@ -20,12 +20,14 @@ public sealed class LauncherSettingsStore
         try
         {
             await using var stream = File.OpenRead(SettingsPath);
-            return await JsonSerializer.DeserializeAsync(
+            var settings = await JsonSerializer.DeserializeAsync(
                     stream,
                     LauncherSettingsJsonContext.Default.LauncherSettings,
                     cancellationToken)
                 .ConfigureAwait(false)
                 ?? throw new InvalidDataException("Файл настроек Minty пуст.");
+            ValidateAccentColor(settings.AccentColor, invalidData: true);
+            return settings;
         }
         catch (JsonException exception)
         {
@@ -40,6 +42,7 @@ public sealed class LauncherSettingsStore
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Память JVM должна быть от 512 до 131072 МБ.");
         }
+        ValidateAccentColor(settings.AccentColor, invalidData: false);
 
         var directory = Path.GetDirectoryName(SettingsPath)
             ?? throw new InvalidOperationException("Не удалось определить папку настроек Minty.");
@@ -58,5 +61,23 @@ public sealed class LauncherSettingsStore
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         File.Move(temporaryPath, SettingsPath, overwrite: true);
+    }
+
+    private static void ValidateAccentColor(string? color, bool invalidData)
+    {
+        var isValid = color is { Length: 7 } &&
+                      color[0] == '#' &&
+                      color.AsSpan(1).ToString().All(Uri.IsHexDigit);
+        if (isValid)
+        {
+            return;
+        }
+
+        if (invalidData)
+        {
+            throw new InvalidDataException("Цвет акцента в settings.json должен быть в формате #RRGGBB.");
+        }
+
+        throw new ArgumentException("Цвет акцента должен быть в формате #RRGGBB.", nameof(color));
     }
 }

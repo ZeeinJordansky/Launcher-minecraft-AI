@@ -188,7 +188,7 @@ public sealed class SecureUpdateService(HttpClient? httpClient = null) : IDispos
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "MintyLauncher/2.1.0 (https://github.com/ZeeinJordansky/Launcher-minecraft-AI)");
+            "MintyLauncher/2.2.0 (https://github.com/ZeeinJordansky/Launcher-minecraft-AI)");
         return client;
     }
 

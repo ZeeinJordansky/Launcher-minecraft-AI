@@ -1,8 +1,8 @@
-name: Minty Launcher - Signed 2.1.0 Release
+name: Minty Launcher - Signed 2.2.0 Release
 
 on:
   push:
-    tags: ["v2.1.0"]
+    tags: ["v2.2.0"]
 
 permissions:
   contents: write
@@ -74,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=2.1.0" "scripts/installer/MintySetup.iss"
+          & $iscc "/DAppVersion=2.2.0" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
 
       - name: Verify application binaries
@@ -98,7 +98,7 @@ jobs:
               sha256 = (Get-FileHash "dist/MintyLauncher-Portable.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
             }
           )
-          $manifest = [ordered]@{ version = "2.1.0"; assets = $assets }
+          $manifest = [ordered]@{ version = "2.2.0"; assets = $assets }
           $json = ConvertTo-Json -InputObject $manifest -Depth 5 -Compress
           $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
           [IO.File]::WriteAllBytes("dist/MintyUpdateManifest.json", $bytes)
@@ -118,12 +118,15 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.0
-          name: Minty Launcher 2.1.0
+          tag_name: v2.2.0
+          name: Minty Launcher 2.2.0
           body: |
-            Minty Launcher 2.1.0 for Windows 10/11 x64.
+            Minty Launcher 2.2.0 for Windows 10/11 x64.
 
-            - C# / Avalonia desktop app published with Native AOT; Java is used only for Minecraft.
+            - Updated gray interface with a user-selectable accent color and simplified launch screen.
+            - Complete Mojang version catalog, including snapshots and historical beta/alpha releases.
+            - Modrinth catalog browses popular content on open, with search, sorting, and verified installation.
+            - C# / Avalonia desktop app; Java is used only for Minecraft.
             - Microsoft Device Code sign-in with ownership verification and Windows Credential Manager refresh-token storage.
             - Vanilla Minecraft installation and launch, Fabric / Quilt / Forge / NeoForge profiles, verified Modrinth mods/resource packs/shaders, worlds, profiles, diagnostics, and settings.
             - Update installer protected by a detached ECDSA signature and SHA-256 asset verification.

@@ -15,16 +15,16 @@ public sealed class ModrinthService(HttpClient? httpClient = null) : IDisposable
         string gameVersion,
         string loader,
         string projectType = "mod",
+        string index = "relevance",
         CancellationToken cancellationToken = default)
     {
         if (projectType is not ("mod" or "resourcepack" or "shader"))
         {
             throw new ArgumentOutOfRangeException(nameof(projectType), "Этот тип контента пока не поддерживается.");
         }
-        if (projectType == "mod" &&
-            loader.ToLowerInvariant() is not ("fabric" or "forge" or "neoforge" or "quilt"))
+        if (index is not ("relevance" or "downloads" or "follows" or "newest" or "updated"))
         {
-            throw new InvalidOperationException("Для поиска модов сначала выбери Fabric, Forge, NeoForge или Quilt.");
+            throw new ArgumentOutOfRangeException(nameof(index), "Неизвестный порядок сортировки Modrinth.");
         }
         var facets = new List<string[]> { new[] { $"project_type:{projectType}" } };
         if (!string.IsNullOrWhiteSpace(gameVersion))
@@ -43,7 +43,7 @@ public sealed class ModrinthService(HttpClient? httpClient = null) : IDisposable
 
         var facetJson = JsonSerializer.Serialize(facets, ModrinthJsonContext.Default.ListStringArray);
         var uri = $"https://api.modrinth.com/v2/search?query={Uri.EscapeDataString(query)}" +
-                  $"&facets={Uri.EscapeDataString(facetJson)}&index=relevance&limit=50";
+                  $"&facets={Uri.EscapeDataString(facetJson)}&index={index}&limit=50";
         using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
@@ -228,7 +228,7 @@ public sealed class ModrinthService(HttpClient? httpClient = null) : IDisposable
     private static HttpClient CreateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("MintyLauncher/2.1.0 (https://github.com/ZeeinJordansky/Launcher-minecraft-AI)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("MintyLauncher/2.2.0 (https://github.com/ZeeinJordansky/Launcher-minecraft-AI)");
         return client;
     }
 
