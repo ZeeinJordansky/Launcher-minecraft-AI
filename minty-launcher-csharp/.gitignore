@@ -1,0 +1,5 @@
+bin/
+obj/
+engine/bin/
+engine/dist/
+engine/**/*.exe

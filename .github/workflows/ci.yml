@@ -3,12 +3,11 @@ name: Minty Launcher - Windows CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
-# Keep only the newest PR build active; stale UI iterations should not compete
-# with the final Windows x64 test and installer pipeline.
 concurrency:
   group: minty-windows-ci-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: true
@@ -18,59 +17,59 @@ permissions:
 
 jobs:
   build:
-    name: Windows x64 tests and installer
+    name: Windows x64 tests and launcher
     runs-on: windows-latest
-    env:
-      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          targets: x86_64-pc-windows-msvc
-      - name: Run Rust tests
-        working-directory: minty-launcher
-        run: cargo test --all-targets --target x86_64-pc-windows-msvc
-      - name: Build x64 application
-        working-directory: minty-launcher
-        run: cargo build --release --target x86_64-pc-windows-msvc
-      - name: Verify application PE
-        shell: bash
-        run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
-      - name: Stage application
+          go-version-file: minty-launcher-csharp/engine/go.mod
+          cache-dependency-path: minty-launcher-csharp/engine/go.mod
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run Go engine tests
+        working-directory: minty-launcher-csharp/engine
+        run: go test ./...
+
+      - name: Build Windows Go engine
+        working-directory: minty-launcher-csharp/engine
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/minty-launcher.exe
-      - name: Install Pillow
-        run: python -m pip install --disable-pip-version-check Pillow
-      - name: Generate setup icon
-        run: python scripts/installer/build_icon.py
-      - name: Install Inno Setup
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags="-s -w" -o dist/minty-engine.exe ./cmd/minty-engine
+
+      - name: Generate application icon
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python scripts/installer/build_icon.py
+
+      - name: Publish self-contained Windows launcher
+        run: dotnet publish minty-launcher-csharp/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
+
+      - name: Stage portable package
         shell: pwsh
         run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (!(Test-Path $iscc)) { choco install innosetup --no-progress -y }
-          if (!(Test-Path $iscc)) { throw "Inno Setup compiler not found." }
-      - name: Compile setup wizard
-        shell: pwsh
+          Compress-Archive -Path dist/launcher/* -DestinationPath dist/MintyLauncher-Portable.zip -Force
+
+      - name: Verify Windows binaries
         run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=1.8.0" "scripts/installer/MintySetup.iss"
-          if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
-      - name: Verify installer and application
-        shell: pwsh
-        run: |
-          python scripts/verify_windows_exe.py dist/minty-launcher.exe
-          if ((Get-Item dist/MintyLauncher-Setup.exe).Length -lt 1000000) { throw "Setup is unexpectedly small." }
-          Get-FileHash dist/minty-launcher.exe -Algorithm SHA256
-          Get-FileHash dist/MintyLauncher-Setup.exe -Algorithm SHA256
+          python scripts/verify_windows_exe.py dist/launcher/minty-launcher.exe
+          python scripts/verify_windows_exe.py dist/launcher/minty-engine.exe --console
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: minty-launcher-windows-x64-v1.8.0
+          name: minty-launcher-windows-x64-2.0.0-global
           path: |
-            dist/minty-launcher.exe
-            dist/MintyLauncher-Setup.exe
+            dist/MintyLauncher-Portable.zip
           if-no-files-found: error

@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Version>2.0.0</Version>
+    <InformationalVersion>2.0.0-global</InformationalVersion>
+    <AssemblyName>minty-launcher</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon Condition="Exists('..\scripts\installer\Minty.ico')">..\scripts\installer\Minty.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="engine\dist\minty-engine.exe" Link="minty-engine.exe"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always"
+             Condition="Exists('engine\dist\minty-engine.exe')" />
+  </ItemGroup>
+
+</Project>

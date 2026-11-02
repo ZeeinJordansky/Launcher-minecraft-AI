@@ -1,20 +1,16 @@
-# Статус проекта Minty Launcher
+# Minty Launcher project status
 
-Последнее обновление: 2026-11-01.
+The active 2.0.0-global application is [`minty-launcher-csharp/`](../minty-launcher-csharp/): a WPF frontend in C# and a Go engine, with Java used to run Minecraft. The legacy Rust launcher remains in [`minty-launcher/`](../minty-launcher/) but is no longer built or published by the 2.0.0-global workflows.
 
-## В репозитории
+## Build and release
 
-- Полный исходный пакет Rust + Java: [Minty-Launcher-source.zip](../Minty-Launcher-source.zip).
-- Windows CI: `.github/workflows/ci.yml`.
-- Автоматическая сборка GitHub Release по тегам `v*`: `.github/workflows/release.yml`.
-- Документация по архитектуре, сборке, авторизации и устранению неполадок находится внутри исходного архива в каталоге `minty-launcher/docs`.
+- CI runs Go tests and publishes a self-contained Windows x64 launcher package.
+- The release workflow runs only for tag `v2.0.0-global`; it builds the installer and portable ZIP.
+- A GitHub release is not published until that tag is pushed and the workflow succeeds.
 
-## Состояние сборки
+## Known limitations
 
-Исходники и workflow добавлены в репозиторий. Успешная компиляция Windows runner'ом пока не подтверждена в этом статус-файле. Проверяй вкладку Actions для результата CI.
-
-Готовый `MintyLauncher.exe` появится в Releases после успешного запуска release workflow по тегу вида `v0.1.0`. До этого момента не следует считать бинарник опубликованным.
-
-## Ограничения текущей версии
-
-Поддерживается Vanilla Minecraft Java Edition. Загрузка Fabric, Forge и NeoForge, менеджер модов и проверка сторонних модификаций на читы не реализованы. Проверка SHA-1 применяется к официальным файлам, для которых Mojang предоставляет контрольную сумму.
+- Microsoft authentication and automated mod-loader installation/launch are not implemented.
+- Modpack projects open on Modrinth for manual installation.
+- Automatic Java installation currently supports Windows x64.
+- The launcher is not Authenticode-signed.

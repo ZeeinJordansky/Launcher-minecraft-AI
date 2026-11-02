@@ -1,39 +1,47 @@
 # Minty Launcher
 
-![Minty Launcher icon](minty-launcher/assets/minty-launcher-icon.png)
+Minty Launcher 2.0.0-global is a Windows x64 Minecraft Java launcher with a custom WPF interface, a Go engine, and Java for running the game.
 
-**Скачать для Windows:** [MintyLauncher-Setup.exe — мастер установки](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/MintyLauncher-Setup.exe)
+## Download
 
-Запусти мастер установки: выбери язык, прими лицензию, укажи папку, отметь нужные ярлыки и нажми «Установить». Переносимая сборка minty-launcher.exe также публикуется отдельно. Терминал, Rust, JDK и отдельная установка Java пользователю не нужны. Совместимая Java Runtime автоматически загружается лаунчером при первом запуске выбранной версии Minecraft. Интернет нужен для загрузки Minecraft и Java.
+The `v2.0.0-global` release publishes a Windows installer and a portable ZIP. The portable ZIP contains the launcher, its Go engine, and the .NET runtime files it needs. It does not require Go or a separate .NET installation.
 
-Иконка Minty встроена в Windows PE-ресурсы EXE и используется окном приложения. Рядом не нужен отдельный ICO или папка ресурсов.
+## Features
 
-## Open-source исходники
+- Original Minty dark interface with a custom profile avatar, animated page transitions, and resizable window.
+- Mojang version catalog with search and release/snapshot filters.
+- Minecraft installation and launch, including verified game assets and managed Temurin Java runtimes on Windows.
+- Modrinth search for mods, modpacks, resource packs, and shaders; popularity and recency sorting.
+- Installs compatible mods, resource packs, and shaders into shared or version-isolated folders. Modpacks open on Modrinth.
+- Offline profile, Java path selection, memory limit, low-spec JVM options, and version-isolated game data.
+- Cancellable downloads and an option to open the active mods directory.
 
-Полный читаемый проект: [minty-launcher/](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/tree/main/minty-launcher) — исходники Rust, Java bootstrap, build script, Cargo manifest, иконка и документация.
+## Current limitations
 
-GitHub автоматически добавляет ссылки Source code (zip) и Source code (tar.gz) к каждому релизу. Это снимки исходного кода, а не приложение. Для запуска скачивай именно отдельный asset minty-launcher.exe.
+- Minecraft authentication is offline-only; Microsoft sign-in is not implemented.
+- This release launches Vanilla Minecraft. Fabric, Forge, NeoForge, and Quilt can be selected as Modrinth compatibility filters, but the launcher does not install or launch those loaders.
+- Modpack projects open on Modrinth instead of being imported automatically.
+- Automatic Java installation currently supports Windows x64.
+- The launcher is not Authenticode-signed.
 
-## Возможности
+## Source layout
 
-- Полный каталог версий Mojang: release, snapshot, old_alpha и old_beta; поиск, фильтры и установка.\n- Установка Vanilla, Forge, NeoForge, Fabric и Quilt для совместимых версий Minecraft.
-- Загрузка client JAR, библиотек, native-библиотек и ресурсов с проверкой SHA-1 Mojang.
-- Автоматическая установка подходящей Java Runtime.
-- Вход Microsoft Device Code с проверкой Xbox/XSTS/профиля Minecraft. Для онлайн-входа требуется Microsoft OAuth Client ID в настройках.
-- Офлайн-профиль для одиночной игры.
-- Skin Studio: импорт PNG, рисование/редактирование пикселей и экспорт скинов 64×64; импорт 64×32 поддерживается.
-- Режим Слабый ПК: уменьшение дальности прорисовки и симуляции, эффектов, лимит памяти Java и щадящие параметры GC.
-- Выбор пользовательской папки установки Minecraft.
-- Журнал событий и настройки лаунчера.
-- Обновлённый адаптивный интерфейс в стиле современных игровых лаунчеров: анимированные кнопки, единая верхняя панель, круглый аватар и полноразмерные разделы.
-- Тёмная тема с мятными акцентами и фирменная иконка приложения.
+- [`minty-launcher-csharp/`](./minty-launcher-csharp/) — C# WPF frontend and Go engine used by 2.0.0-global.
+- [`minty-launcher/`](./minty-launcher/) — legacy Rust implementation; it is not used by the 2.0.0-global workflows.
+- [`.github/workflows/`](./.github/workflows/) — Windows CI and tag-triggered release pipeline.
 
-## Ограничения
+## Build and test
 
-Skin Studio редактирует и экспортирует PNG. Чистый Vanilla Minecraft не применяет локальную PNG-текстуру к офлайн-профилю автоматически; для отображения скина в игре нужен совместимый мод загрузки локальных скинов.
+Run Go tests from `minty-launcher-csharp/engine`:
 
-Режим Слабый ПК применяет более лёгкие параметры, но конкретный прирост FPS не гарантируется — он зависит от железа, драйверов, версии игры и мира. Совместимость модлоадеров зависит от наличия официальной версии установщика для выбранного Minecraft. SHA-1 проверка защищает целостность официальных загрузок и не является античитом.
+```sh
+go test ./...
+```
 
-## Сборка
+Build the WPF frontend on Windows with .NET 10:
 
-Windows workflow запускает тесты, собирает x64 PE, проверяет PE-заголовки, наличие встроенного icon resource и SHA-256, затем публикует только minty-launcher.exe. JDK 21 требуется только на build runner для компиляции встроенного Java bootstrap.
+```powershell
+dotnet build minty-launcher-csharp/MintyLauncher.csproj
+```
+
+The release workflow cross-compiles the Go engine for Windows x64, publishes a self-contained .NET application, packages the portable ZIP and installer, and runs the Go test suite.

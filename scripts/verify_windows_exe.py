@@ -22,13 +22,14 @@ def u32(data: bytes, offset: int) -> int:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: python scripts/verify_windows_exe.py path/to/minty-launcher.exe")
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--console"):
+        raise SystemExit("Usage: python scripts/verify_windows_exe.py path/to/app.exe [--console]")
 
     path = Path(sys.argv[1])
+    console = len(sys.argv) == 3
     require(path.is_file(), f"file not found: {path}")
     data = path.read_bytes()
-    require(len(data) >= 1024 * 1024, f"unexpectedly small executable ({len(data)} bytes)")
+    require(len(data) >= 1024, f"unexpectedly small executable ({len(data)} bytes)")
     require(data[:2] == b"MZ", "missing DOS MZ signature")
 
     pe_offset = u32(data, 0x3C)
@@ -43,7 +44,17 @@ def main() -> None:
     optional_offset = pe_offset + 24
     require(optional_offset + optional_size <= len(data), "truncated optional header")
     require(u16(data, optional_offset) == 0x20B, "expected PE32+ optional header")
-    require(u16(data, optional_offset + 68) == 2, "expected Windows GUI subsystem")
+    expected_subsystem = 3 if console else 2
+    require(
+        u16(data, optional_offset + 68) == expected_subsystem,
+        "expected Windows console subsystem" if console else "expected Windows GUI subsystem",
+    )
+
+    if console:
+        print(f"Valid Windows PE32+ x64 console executable: {path}")
+        print(f"Size: {len(data):,} bytes")
+        print(f"SHA-256: {hashlib.sha256(data).hexdigest()}")
+        return
 
     resource_entry = optional_offset + 112 + 2 * 8
     require(resource_entry + 8 <= optional_offset + optional_size, "resource directory entry missing")
@@ -82,7 +93,7 @@ def main() -> None:
             break
     require(has_group_icon, "RT_GROUP_ICON resource (type 14) was not found")
 
-    print(f"Valid Windows PE32+ x64 executable: {path}")
+    print(f"Valid Windows PE32+ x64 GUI executable: {path}")
     print("Embedded application icon resource: yes")
     print(f"Size: {len(data):,} bytes")
     print(f"SHA-256: {hashlib.sha256(data).hexdigest()}")

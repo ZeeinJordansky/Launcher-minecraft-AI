@@ -1,6 +1,6 @@
 #define AppName "Minty Launcher"
 #ifndef AppVersion
-  #define AppVersion "1.8.0"
+  #define AppVersion "2.0.0"
 #endif
 
 [Setup]
@@ -58,7 +58,7 @@ Name: "desktopicon"; Description: "{cm:DesktopShortcut}"; GroupDescription: "Sho
 Name: "startmenuicon"; Description: "{cm:StartMenuShortcut}"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-Source: "..\..\dist\minty-launcher.exe"; DestDir: "{app}"; DestName: "minty-launcher.exe"; Flags: ignoreversion
+Source: "..\..\dist\launcher\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{userdesktop}\Minty Launcher"; Filename: "{app}\minty-launcher.exe"; Tasks: desktopicon

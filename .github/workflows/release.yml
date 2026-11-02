@@ -1,52 +1,58 @@
-name: Minty Launcher - Windows Release
+name: Minty Launcher - Global Release
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    tags:
+      - "v2.0.0-global"
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build, verify and publish installer
+    name: Build, verify and publish Windows release
     runs-on: windows-latest
-    env:
-      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          targets: x86_64-pc-windows-msvc
+          go-version-file: minty-launcher-csharp/engine/go.mod
+          cache-dependency-path: minty-launcher-csharp/engine/go.mod
 
-      - name: Run Rust tests
-        working-directory: minty-launcher
-        run: cargo test --all-targets --target x86_64-pc-windows-msvc
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
 
-      - name: Build x64 application
-        working-directory: minty-launcher
-        run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Run Go engine tests
+        working-directory: minty-launcher-csharp/engine
+        run: go test ./...
 
-      - name: Verify application PE
-        shell: bash
-        run: python scripts/verify_windows_exe.py minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe
-
-      - name: Stage application
+      - name: Build Windows Go engine
+        working-directory: minty-launcher-csharp/engine
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item minty-launcher/target/x86_64-pc-windows-msvc/release/minty-launcher.exe dist/minty-launcher.exe
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags="-s -w" -o dist/minty-engine.exe ./cmd/minty-engine
 
-      - name: Install Pillow
-        run: python -m pip install --disable-pip-version-check Pillow
+      - name: Install Pillow and generate application icon
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python scripts/installer/build_icon.py
 
-      - name: Generate setup icon
-        run: python scripts/installer/build_icon.py
+      - name: Publish self-contained Windows launcher
+        run: dotnet publish minty-launcher-csharp/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
+
+      - name: Stage portable package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/launcher/* -DestinationPath dist/MintyLauncher-Portable.zip -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -59,47 +65,38 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=1.8.0" "scripts/installer/MintySetup.iss"
+          & $iscc "/DAppVersion=2.0.0" "scripts/installer/MintySetup.iss"
           if (!(Test-Path "dist/MintyLauncher-Setup.exe")) { throw "Setup EXE was not generated." }
 
-      - name: Verify installer and application
+      - name: Verify release binaries
         shell: pwsh
         run: |
-          python scripts/verify_windows_exe.py dist/minty-launcher.exe
+          python scripts/verify_windows_exe.py dist/launcher/minty-launcher.exe
+          python scripts/verify_windows_exe.py dist/launcher/minty-engine.exe --console
           if ((Get-Item dist/MintyLauncher-Setup.exe).Length -lt 1000000) { throw "Setup is unexpectedly small." }
-          Get-FileHash dist/minty-launcher.exe -Algorithm SHA256
+          Get-FileHash dist/launcher/minty-launcher.exe -Algorithm SHA256
+          Get-FileHash dist/launcher/minty-engine.exe -Algorithm SHA256
           Get-FileHash dist/MintyLauncher-Setup.exe -Algorithm SHA256
-
-      - name: Create or move v1.8.0 tag to the tested commit
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            try {
-              await github.rest.git.updateRef({ owner, repo, ref: "tags/v1.8.0", sha: context.sha, force: true });
-            } catch (error) {
-              if (error.status !== 404 && error.status !== 422) throw error;
-              await github.rest.git.createRef({ owner, repo, ref: "refs/tags/v1.8.0", sha: context.sha });
-            }
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.0
-          name: Minty Launcher v1.8.0
+          tag_name: v2.0.0-global
+          name: Minty Launcher 2.0.0-global
           body: |
-            Minty Launcher v1.8.0 for Windows 10/11 x64.
+            Minty Launcher 2.0.0-global for Windows 10/11 x64.
 
-            - Авторский интерфейс Minty с мягким градиентным фоном, обновлённой палитрой и плавными переходами.
-            - Фирменная иконка Minty используется как аватар локального профиля.
-            - Исправлено переполнение карточек каталога модов на узкой ширине.
-            - Каталог Modrinth: категории, поиск, сортировка, фильтр совместимости и выбор версии.
-            EXE не подписан Authenticode.
+            - Новый интерфейс WPF на C# с авторским Minty-оформлением, анимациями и кастомной аватаркой.
+            - Go-движок для Mojang, Modrinth, настроек, загрузок и запуска Java Edition.
+            - Поиск и сортировка проектов Modrinth, категории модов, модпаков, ресурспаков и шейдеров.
+            - Исправлены переполнение карточек каталога и установка контента в изолированные профили.
+            - Переносимый ZIP включает интерфейс и Go-движок; установщик включает оба файла.
+            - Установка модпаков выполняется через страницу Modrinth. Загрузчики модов и вход Microsoft пока не поддерживаются.
+            - EXE не подписан Authenticode.
           generate_release_notes: true
           files: |
             dist/MintyLauncher-Setup.exe
-            dist/minty-launcher.exe
+            dist/MintyLauncher-Portable.zip
           fail_on_unmatched_files: true
           overwrite_files: true
           make_latest: true
