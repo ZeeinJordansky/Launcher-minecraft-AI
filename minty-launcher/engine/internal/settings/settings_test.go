@@ -27,7 +27,7 @@ func TestValidateRejectsUnsafeUsernamesAndMemory(t *testing.T) {
 
 func TestProfileDirectoryRespectsIsolatedProfiles(t *testing.T) {
 	configuration := Defaults()
-	configuration.GameDirectory = filepath.Join(string(filepath.Separator), "games", "minecraft")
+	configuration.GameDirectory = t.TempDir()
 	configuration.SelectedVersion = "1.21.4"
 
 	directory, err := ProfileDirectory(configuration)
