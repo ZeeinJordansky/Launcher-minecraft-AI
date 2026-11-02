@@ -26,8 +26,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: minty-launcher-csharp/engine/go.mod
-          cache-dependency-path: minty-launcher-csharp/engine/go.mod
+          go-version-file: minty-launcher/engine/go.mod
+          cache-dependency-path: minty-launcher/engine/go.mod
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -35,11 +35,11 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Run Go engine tests
-        working-directory: minty-launcher-csharp/engine
+        working-directory: minty-launcher/engine
         run: go test ./...
 
       - name: Build Windows Go engine
-        working-directory: minty-launcher-csharp/engine
+        working-directory: minty-launcher/engine
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -54,7 +54,7 @@ jobs:
           python scripts/installer/build_icon.py
 
       - name: Publish self-contained Windows launcher
-        run: dotnet publish minty-launcher-csharp/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
+        run: dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
 
       - name: Stage portable package
         shell: pwsh

@@ -1,6 +1,6 @@
 # Minty Launcher project status
 
-The active 2.0.0-global application is [`minty-launcher-csharp/`](../minty-launcher-csharp/): a WPF frontend in C# and a Go engine, with Java used to run Minecraft. The legacy Rust launcher remains in [`minty-launcher/`](../minty-launcher/) but is no longer built or published by the 2.0.0-global workflows.
+The active 2.0.0-global application lives directly in [`minty-launcher/`](../minty-launcher/): a WPF frontend in C# and a Go engine, with Java used to run Minecraft. Legacy Rust source files remain in that folder but are no longer built or published by the 2.0.0-global workflows.
 
 ## Build and release
 

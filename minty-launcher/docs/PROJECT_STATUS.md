@@ -1,32 +1,17 @@
-# Состояние проекта
+# Minty Launcher project status
 
-## Исходники v1.8.0
+The active 2.0.0-global app is built directly in this folder: a C# WPF frontend and Go engine, using Java to run Minecraft. The legacy Rust sources remain here but are not used by current CI or release workflows.
 
-- Переработана панель заголовка: точное резервирование ширины кнопок, векторные значки и анимированная подсветка.
-- Восстановлено изменение размера безрамочного окна мышью.
-- Добавлен независимый масштаб интерфейса 80–150% с сохранением настройки.
-- Профиль — ник, круглый аватар и статус — закреплён справа в верхней панели.
-- Внутренние вкладки и страницы Minecraft используют всю доступную ширину и высоту.
-- Каталог Modrinth построен как витрина: панель установленных модов, широкие карточки, категории, поиск, сортировка и фильтр совместимости.
-- Популярные проекты загружаются автоматически при первом открытии каталога.
-- Общая библиотека или отдельные каталоги для каждой сборки применяются к mods, saves, resourcepacks, shaderpacks и конфигурациям.
-- Добавлена установка ресурспаков и шейдеров, а также безопасный импорт ZIP-карт Java Edition.
-- Сохранены Microsoft/офлайн-профили, Java/Bedrock, Skin Workshop, диагностика и запуск Minecraft.
-- Заменена пиксельная подложка на мягкий авторский фон Minty, обновлена палитра и фирменный аватар офлайн-профиля.
-- Карточки каталога Modrinth перестраиваются на узком пространстве, устраняя горизонтальное переполнение.
+## Release
 
-## Публикация
+The root `release.yml` workflow runs when tag `v2.0.0-global` is pushed. It tests and builds the Go engine, publishes a self-contained Windows x64 WPF app, packages an installer and portable ZIP, and creates the GitHub release.
 
-Windows x64 workflow выполняет cargo test, release build, проверку PE и сборку установщика. При успешном прохождении проверки публикуется релиз v1.8.0 с EXE и установщиком.
+The tag currently needs to reference the commit containing the relocated app sources and current workflow. If a prior tag exists, moving it requires a force push.
 
-## Оставшиеся ограничения
+## Current limitations
 
-- Модпаки отображаются в каталоге, но открывают страницу источника. Полноценная установка .mrpack требует обработки manifest, разрешения зависимостей и установки загрузчика.
-- Вкладка карт ищет проекты Modrinth среди modpack-проектов по запросу map, поскольку отдельного типа world в API нет.
-- CurseForge открывается через официальный сайт; установка через API требует developer key.
-- Ely.by/Mojang skin upload и плащи не подключены.
-- Skin preview остаётся 2D-композицией, а не вращаемой 3D-моделью.
-- Windows Sandbox/AppContainer не реализован.
-- Статическая проверка модов не является антивирусом и не разрешает все зависимости.
-- Bedrock version pinning и rollback контролирует Microsoft Store.
-- EXE не подписан Authenticode.
+- Microsoft account authentication is not implemented; profiles are offline-only.
+- Fabric, Forge, NeoForge, and Quilt can filter Modrinth search results but are not installed or launched automatically.
+- Modpack projects open on Modrinth rather than importing `.mrpack` dependencies.
+- Automatic Java installation currently supports Windows x64.
+- The launcher is not Authenticode-signed.

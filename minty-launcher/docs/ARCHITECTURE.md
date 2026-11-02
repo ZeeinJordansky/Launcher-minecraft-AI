@@ -1,49 +1,18 @@
-# Архитектура Minty Launcher
+# Architecture
 
-## Компоненты
+The desktop application is split into a WPF frontend and a standalone Go process:
 
-- app.rs: UI на egui, этапный splash, навигация, библиотека профилей, Skin Workshop, каталог Modrinth, журнал и фоновые задачи.
-- config.rs: настройки лаунчера, журнал и вычисление папки активного игрового экземпляра.
-- crash.rs: статический разбор последнего minecraft.log и подсказки по типовым ошибкам.
-- mods.rs: каталог Modrinth, загрузка модов/ресурспаков/шейдеров, безопасный импорт карт из ZIP и статический анализ JAR.
-- minecraft.rs: официальный манифест Mojang, client JAR, libraries, natives, assets и запуск JVM.
-- runtime.rs: обнаружение Java и установка Temurin Runtime требуемой версии.
-- bedrock.rs: запуск зарегистрированных URI Bedrock Stable/Preview и импорт пакетов Minecraft.
+1. The frontend serializes an action and settings as one JSON object and writes it to the engine's standard input.
+2. The engine executes one request, emits JSON-line events to standard output, and exits with a non-zero status on errors.
+3. The frontend reads progress and completion events while monitoring the process. Cancellation terminates the engine process tree.
+4. The engine owns Mojang/Modrinth networking, settings persistence, Java runtime management, downloads, and game launch.
 
-## Хранение игрового контента
+The release package places `minty-engine.exe` next to `minty-launcher.exe`. The WPF client prefers that packaged executable and uses `go run` only when launched from a development checkout with Go installed.
 
-В настройке Minecraft доступны два режима.
+## Data directories
 
-1. Общая библиотека (по умолчанию): все игровые профили используют общие каталоги game_dir/mods, game_dir/saves, game_dir/resourcepacks, game_dir/shaderpacks и конфигурации.
-2. Отдельно для каждой сборки: изменяемые данные хранятся в game_dir/instances/profile-id/.
+Settings are stored in the user's operating-system config directory under `Minty Launcher/settings.json`. Managed Java runtimes and launcher logs use the operating-system cache directory. Minecraft files use the selected game directory; isolated profiles use `instances/<version>` for the game working directory and mod content.
 
-При первом запуске изолированного экземпляра существующие файлы копируются в папку профиля. Уже существующие файлы назначения не перезаписываются, исходные файлы не удаляются. Простое переключение режима не переносит и не удаляет данные. Общие versions, libraries, assets и natives остаются в корне игры.
+## Release
 
-## Масштабирование и окно
-
-Масштаб интерфейса хранится в AppConfig.ui_scale и применяется через egui Context::set_pixels_per_point. Допустимый диапазон — 0.80–1.50. Окно без системной рамки остаётся изменяемым: обработчик краевых hit zones отправляет ViewportCommand::BeginResize. Панель заголовка резервирует точную ширину трёх управляющих кнопок, оставляя отдельную область перетаскивания.
-
-## Каталог Modrinth
-
-По умолчанию каталог получает популярные проекты без фильтрации по версии. Фильтр совместимости применяет версию Minecraft и загрузчик только после явного включения пользователем. Значение latest-release разрешается в реальный номер последнего релиза до отправки запроса.
-
-Категории модов, модпаков, ресурспаков и шейдеров соответствуют типам проекта Modrinth. Отдельного типа world у Modrinth нет: вкладка карт ищет map-проекты среди modpack-проектов. Моды сохраняются как JAR, ресурспаки и шейдеры — как ZIP. Модпаки пока открывают исходную страницу, так как полноценная установка требует разрешения дерева зависимостей и установки загрузчика.
-
-ZIP-карты импортируются в saves. Архив распаковывается во временный каталог; допускаются только безопасные относительные пути, пропускаются символические ссылки, ограничивается общий размер распаковки, а успешное завершение требует наличия level.dat.
-
-## Производительность
-
-Профиль «Слабый ПК» снижает дальность прорисовки, simulation distance, частицы, облака и некоторые эффекты. Исходный options.txt резервируется и восстанавливается при выключении профиля. G1GC используется как безопасный вариант по умолчанию; ZGC и Shenandoah требуют совместимого runtime.
-
-## Диагностика и безопасность
-
-1. Загрузки выполняются через TLS, опубликованные хеши проверяются там, где они предоставлены источником.
-2. ZIP-архивы извлекаются с проверкой безопасного относительного пути.
-3. Microsoft refresh token не хранится в settings.json.
-4. Анализ модов читает JAR metadata и не запускает мод-код.
-5. Crash Reporter формирует эвристические подсказки, а не полную экспертную атрибуцию вылета.
-6. Запуск Java пока не ограничивается AppContainer/restricted token. Поэтому это не песочница для непроверенных модов.
-
-## Skin Workshop
-
-Редактор поддерживает UV-атлас 64×64 RGBA, кисть, ластик, заливку, пипетку, размер кисти, зеркальное рисование, масштаб, палитру, undo/redo и локальный импорт/экспорт PNG. Предпросмотр представляет собой 2D-композицию, а не полноценную вращаемую 3D-модель.
+The `v2.0.0-global` tag triggers Windows x64 Go tests, engine cross-compilation, .NET self-contained publish, installer packaging, and release asset publication. Runtime content must remain alongside the WPF executable so the frontend can locate `minty-engine.exe`.

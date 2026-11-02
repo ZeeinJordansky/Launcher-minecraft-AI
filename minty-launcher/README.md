@@ -1,51 +1,40 @@
-# Minty Launcher
+# Minty Launcher 2.0.0-global
 
-**Minty Launcher** — нативный лаунчер Minecraft для Windows 10/11 x64 на Rust и egui.
+The active launcher source is in this folder: a C# / WPF desktop frontend, a Go backend, and Java to run Minecraft. The legacy Rust sources remain here but are no longer part of the 2.0.0-global build.
 
-## Интерфейс и каталог v1.8.0
+## Architecture
 
-- Обновлённая верхняя панель в стиле современных игровых лаунчеров. Профиль — ник, круглый аватар и статус — закреплён у правого края.
-- Векторные кнопки свернуть, развернуть/восстановить и закрыть с анимацией наведения. Исправлено резервирование места под кнопки.
-- Окно можно изменять мышью. Масштаб интерфейса настраивается в диапазоне 80–150%.
-- Внутренние разделы и вкладки используют всю доступную рабочую область.
-- Новый авторский фон Minty с мягким цветовым свечением вместо пиксельной текстуры; обновлены базовые цвета и аватар локального профиля.
-- Каталог Modrinth: боковая панель установленных модов, широкая лента проектов, категории «Модпаки», «Моды», «Ресурс-паки», «Карты» и «Шейдеры», поиск, сортировка и фильтр совместимости.
-- Карточки каталога адаптируются к ширине окна, кнопки и описание больше не уходят за правый край.
-- Моды, миры, ресурспаки и шейдеры можно хранить общей библиотекой для всех версий либо отдельно для каждой сборки. Переключение режима не удаляет старые файлы.
-- Ресурспаки и шейдеры устанавливаются как ZIP. ZIP-карты Java Edition импортируются в saves после проверки архива и поиска level.dat.
+- `MainWindow.xaml` and `MainWindow.xaml.cs`: custom Minty UI, navigation, settings, versions, Modrinth catalog, and progress.
+- `Services/EngineClient.cs`: starts `minty-engine.exe` and exchanges JSON-lines requests/events over standard input/output.
+- `engine/cmd/minty-engine`: Go command dispatcher.
+- `engine/internal/minecraft`: Mojang manifest, verified downloads, runtime setup, and Java launch.
+- `engine/internal/mods`: Modrinth search and verified compatible file installation.
+- `engine/internal/settings`: validated, atomic user settings and profile paths.
 
-## Основные возможности
+The Go executable is shipped next to the frontend. During development, the UI can start the engine with `go run` when the Go source tree is available.
 
-- Проверка обновлений лаунчера, обнаружение Java и запуск Minecraft через javaw.exe.
-- Установка официальных версий Minecraft Java Edition и совместимых загрузчиков.
-- Общая или раздельная библиотека mods, saves, resourcepacks, shaderpacks и конфигураций.
-- Каталог Modrinth с популярными проектами, поиском и сортировкой.
-- Статическая диагностика JAR: повреждённые архивы, повторяющиеся mod ID и часть конфликтов загрузчиков.
-- Полноэкранный запуск Java Edition, автоматическое и ручное управление Java Runtime.
-- Skin Workshop: редактор UV-текстуры 64×64, импорт/экспорт PNG, история действий.
-- Режим «Слабый ПК», настройки Java-памяти и графики.
-- Crash Reporter для разбора типовых ошибок Minecraft.
-- Bedrock Stable / Preview: запуск установленных каналов и импорт пакетов.
-- Microsoft и офлайн-профили, раздельные настройки и журнал.
+## Supported behavior
 
-## Скачать
+- Search and install Vanilla Minecraft Java versions.
+- Install Windows Temurin runtimes automatically when a compatible runtime is not configured.
+- Search Modrinth for mods, modpacks, resource packs, and shaders with category and sort filters.
+- Install compatible mods, resource packs, and shaders into shared or per-version profile folders.
+- Configure an offline username, Java executable, game path, memory limit, low-spec JVM flags, and interface animations.
+- Cancel active downloads and open the current mods folder.
 
-- [Последний EXE](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/minty-launcher.exe)
-- [Установщик Windows](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/latest/download/MintyLauncher-Setup.exe)
-- [Релиз v1.8.0](https://github.com/ZeeinJordansky/Launcher-minecraft-AI/releases/tag/v1.8.0)
-- [Исходный код](https://github.com/ZeeinJordansky/Launcher-minecraft-AI)
+Microsoft authentication and automated mod-loader installation/launch are not implemented. Modloader selection is used as a Modrinth compatibility filter; launching a non-Vanilla loader is explicitly rejected instead of silently starting the wrong profile. Modpacks open their Modrinth page.
 
-## Ограничения
+## Local checks
 
-- Модпаки отображаются в каталоге, но пока открывают страницу проекта. Полноценная установка .mrpack требует отдельного обработчика manifest, разрешения зависимостей и установки загрузчика.
-- Вкладка карт ищет проекты Modrinth среди modpack-проектов по запросу map: API Modrinth не предоставляет отдельный project type world.
-- CurseForge открывается через официальный сайт; прямая установка через API требует ключ разработчика.
-- Bedrock Stable / Preview устанавливаются и обновляются через Microsoft Store.
-- Проверка модов не является антивирусом и не разрешает все зависимости.
-- Windows Sandbox/AppContainer для Java не реализован. Не запускайте непроверенные моды.
-- Ely.by/Mojang skin upload и плащи не подключены; Skin Workshop работает локально.
-- Microsoft OAuth требует собственного Public Client ID. Client Secret не нужен.
-- EXE не подписан Authenticode, поэтому Windows SmartScreen может показать предупреждение.
+```sh
+cd engine
+go test ./...
+```
 
-Подробности сборки: docs/BUILDING.md.  
-MIT License — см. LICENSE.
+On Windows with .NET 10:
+
+```powershell
+dotnet build MintyLauncher.csproj
+```
+
+The repository CI builds a self-contained Windows x64 publish directory and the release workflow packages it with `minty-engine.exe`.

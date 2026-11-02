@@ -1,25 +1,37 @@
-# Сборка Minty Launcher на Windows
+# Building Minty Launcher 2.0.0-global
 
-## Требования
+## Requirements
 
-- Windows 10/11 x64.
-- Rust stable и Cargo.
-- Visual Studio 2022 Build Tools с workload Desktop development with C++ (MSVC linker и Windows SDK).
-- JDK 21 x64. Команда javac -version должна выполняться из cmd.
+- Windows 10/11 x64 for running the WPF interface.
+- .NET 10 SDK for building the C# frontend.
+- Go 1.23 or later for tests and the Go engine.
+- Pillow for generating the application and installer icon.
+- Inno Setup 6 to build the Windows installer.
 
-build.rs компилирует java/MintyBootstrap.java в совместимый с Java 8 bytecode, генерирует ICO из assets/minty-launcher-icon.png и встраивает его в PE-ресурсы Windows. src/main.rs использует ту же PNG-иконку в заголовке окна и на панели задач. Поэтому при сборке нужен JDK с javac, а не только JRE.
+Minecraft Java Runtime is downloaded by the launcher as needed; a JDK is not needed to build or run the launcher.
 
-## Сборка
+## Local checks
 
-Из каталога minty-launcher:
+From the repository root, run the Go tests:
 
-cargo test --all-targets --target x86_64-pc-windows-msvc
-cargo build --release --target x86_64-pc-windows-msvc
+```sh
+cd minty-launcher/engine
+go test ./...
+go vet ./...
+```
 
-Готовый файл: target/x86_64-pc-windows-msvc/release/minty-launcher.exe.
+Build the WPF frontend from the repository root on Windows:
 
-## Автоматическая сборка
+```powershell
+dotnet build minty-launcher/MintyLauncher.csproj
+```
 
-Корневой .github/workflows/ci.yml выполняет Windows x64 build и unit-тесты при каждом push в main и pull request.
+To package the Windows application, first build `minty-engine.exe` for Windows x64 into `minty-launcher/engine/dist/`, generate the icon with `python scripts/installer/build_icon.py`, then publish:
 
-Корневой .github/workflows/release.yml выполняет отдельную сборку на Windows runner и публикует единственный бинарник minty-launcher.exe в GitHub Releases. До публикации скрипт проверяет DOS/PE-заголовки, архитектуру x64 и наличие встроенного RT_GROUP_ICON-ресурса. Релиз публикуется только после успешных тестов, компиляции и проверки PE-файла.
+```powershell
+dotnet publish minty-launcher/MintyLauncher.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/launcher
+```
+
+The published directory includes the Go engine beside the launcher. The root GitHub Actions workflows perform this packaging, validate both PE files, build a portable ZIP, and create the installer for tag `v2.0.0-global`.
+
+The legacy Rust files remain in this folder for reference; they are not used by the current CI or release workflow.

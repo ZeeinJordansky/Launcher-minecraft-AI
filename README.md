@@ -26,22 +26,22 @@ The `v2.0.0-global` release publishes a Windows installer and a portable ZIP. Th
 
 ## Source layout
 
-- [`minty-launcher-csharp/`](./minty-launcher-csharp/) — C# WPF frontend and Go engine used by 2.0.0-global.
-- [`minty-launcher/`](./minty-launcher/) — legacy Rust implementation; it is not used by the 2.0.0-global workflows.
+- [`minty-launcher/`](./minty-launcher/) — active C# WPF frontend and Go engine. Legacy Rust source files remain in the same folder but are not used by the 2.0.0-global workflows.
 - [`.github/workflows/`](./.github/workflows/) — Windows CI and tag-triggered release pipeline.
 
 ## Build and test
 
-Run Go tests from `minty-launcher-csharp/engine`:
+Run Go tests:
 
 ```sh
+cd minty-launcher/engine
 go test ./...
 ```
 
 Build the WPF frontend on Windows with .NET 10:
 
 ```powershell
-dotnet build minty-launcher-csharp/MintyLauncher.csproj
+dotnet build minty-launcher/MintyLauncher.csproj
 ```
 
 The release workflow cross-compiles the Go engine for Windows x64, publishes a self-contained .NET application, packages the portable ZIP and installer, and runs the Go test suite.
